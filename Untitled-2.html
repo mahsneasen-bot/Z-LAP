@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Z-LAB | Premium Physics Simulator PRO</title>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <style>
+        /* ========================================= */
+        /* 1. المتغيرات والألوان الأساسية (Theme)    */
+        /* ========================================= */
+        :root {
+            --bg-deep: #000000;
+            --glass-bg: rgba(15, 15, 20, 0.75);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --text-main: #ffffff;
+            --text-muted: #88909b;
+            --accent: #00ffcc;
+            --accent-glow: rgba(0, 255, 204, 0.3);
+            --thermo-color: #ff3300;
+            --sidebar-width: 320px;
+            --data-width: 400px;
+            --error: #ff4d4d;
+        }
+
+        /* ========================================= */
+        /* 2. الإعدادات العامة (Global Reset)        */
+        /* ========================================= */
+        * { 
+            box-sizing: border-box; 
+            margin: 0; 
+            padding: 0; 
+            font-family: 'SF Pro Display', 'Segoe UI', system-ui, -apple-system, sans-serif; 
+        }
+
+        body { 
+            background-color: var(--bg-deep); 
+            color: var(--text-main); 
+            overflow: hidden; 
+            height: 100vh; 
+            width: 100vw; 
+        }
+
+        /* ========================================= */
+        /* 3. الخلفية التفاعلية (Canvas)             */
+        /* ========================================= */
+        #bg-canvas { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100vw; 
+            height: 100vh; 
+            z-index: 0; 
+            pointer-events: none; 
+        }
+
+        .glass { 
+            background: var(--glass-bg); 
+            backdrop-filter: blur(30px); 
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid var(--glass-border); 
+            box-shadow: 0 15px 50px rgba(0,0,0,0.8); 
+        }
+
+        /* ========================================= */
+        /* 4. شاشة تسجيل الدخول (Login UI)           */
+        /* ========================================= */
+        #login-screen { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100vw; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 2000; 
+            background: transparent; 
+            transition: all 1s cubic-bezier(0.4, 0, 0.2, 1);
+            perspective: 1000px; 
+        }
+
+        .login-box { 
+            padding: 60px; 
+            border-radius: 40px; 
+            width: 480px; 
+            text-align: center; 
+            border: 1px solid var(--glass-border); 
+            background: rgba(10, 10, 15, 0.85); 
+            transform-style: preserve-3d;
+            transition: transform 0.1s ease-out;
+            z-index: 10;
+        }
+
+        .login-box h1 { 
+            font-weight: 200; 
+            letter-spacing: 15px; 
+            font-size: 50px; 
+            margin-bottom: 5px; 
+            color: #fff; 
+            text-shadow: 0 0 20px rgba(255,255,255,0.2); 
+            transform: translateZ(50px); 
+        }
+
+        .auth-tag { 
+            color: var(--accent); 
+            font-size: 10px; 
+            letter-spacing: 6px; 
+            margin-bottom: 45px; 
+            display: block; 
+            text-transform: uppercase;
+            opacity: 0.8; 
+            transform: translateZ(30px); 
+        }
+
+        .login-input { 
+            width: 100%; 
+            padding: 18px; 
+            margin-bottom: 20px; 
+            background: rgba(255,255,255,0.03); 
+            border: 1px solid var(--glass-border); 
+            color: white; 
+            border-radius: 20px; 
+            outline: none; 
+            transition: 0.4s; 
+            font-size: 14px; 
+            transform: translateZ(20px); 
+        }
+
+        .login-input:focus { 
+            border-color: var(--accent); 
+            background: rgba(0,255,204,0.08);
+            box-shadow: 0 0 20px var(--accent-glow); 
+        }
+
+        .login-btn { 
+            width: 100%; 
+            padding: 18px; 
+            background: #fff; 
+            color: #000; 
+            border: none; 
+            border-radius: 20px; 
+            font-weight: 900; 
+            cursor: pointer; 
+            transition: 0.5s; 
+            letter-spacing: 3px; 
+            text-transform: uppercase;
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 12px; 
+            transform: translateZ(40px); 
+        }
+
+        .login-btn:hover { 
+            background: var(--accent); 
+            transform: translateZ(40px) scale(1.02) translateY(-3px); 
+            box-shadow: 0 15px 40px var(--accent-glow); 
+        }
+
+        .google-btn { 
+            background: transparent; 
+            color: #fff; 
+            border: 1px solid #333; 
+            margin-top: 15px; 
+        }
+
+        .divider { 
+            display: flex; 
+            align-items: center; 
+            text-align: center;
+            color: #444; 
+            margin: 20px 0; 
+            font-size: 12px; 
+            letter-spacing: 3px; 
+            transform: translateZ(10px); 
+        }
+
+        .divider::before, .divider::after { 
+            content: ''; 
+            flex: 1; 
+            border-bottom: 1px solid #222; 
+        }
+
+        #boot-terminal { 
+            position: absolute; 
+            bottom: 30px; 
+            color: var(--accent); 
+            font-family: 'Courier New', Courier, monospace; 
+            font-size: 12px; 
+            letter-spacing: 3px; 
+            opacity: 0.7; 
+            text-shadow: 0 0 10px var(--accent-glow);
+        }
+
+        /* ========================================= */
+        /* 5. تخطيط التطبيق الرئيسي (Grid Layout)    */
+        /* ========================================= */
+        #main-app { 
+            position: relative; 
+            z-index: 10; 
+            display: none; 
+            grid-template-areas: 
+                "header header header"
+                "data canvas sidebar"
+                "data canvas ai"; 
+            grid-template-columns: var(--data-width) 1fr var(--sidebar-width); 
+            grid-template-rows: 80px 1fr 350px; 
+            height: 100vh; 
+            opacity: 0; 
+            transition: opacity 1.5s ease;
+        }
+
+        header { 
+            grid-area: header; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 0 40px; 
+            border-bottom: 1px solid var(--glass-border); 
+            background: rgba(5, 5, 5, 0.8); 
+        }
+
+        .brand-name { 
+            font-size: 26px; 
+            letter-spacing: 8px; 
+            font-weight: 200; 
+        }
+
+        /* --- اللوحة اليسرى (Data Input Panel) --- */
+        .data-panel { 
+            grid-area: data; 
+            border-right: 1px solid var(--glass-border); 
+            padding: 35px; 
+            overflow-y: auto; 
+        }
+
+        .data-row { 
+            margin-bottom: 25px; 
+        }
+
+        .data-label { 
+            display: block; 
+            font-size: 13px; 
+            color: var(--text-muted); 
+            margin-bottom: 10px; 
+            font-weight: 600; 
+            letter-spacing: 1px; 
+        }
+
+        .data-input { 
+            width: 100%; 
+            background: #000; 
+            border: 1px solid #333; 
+            color: var(--accent); 
+            padding: 14px; 
+            border-radius: 12px; 
+            font-family: 'Courier New', monospace; 
+            outline: none; 
+            transition: 0.3s; 
+            font-size: 15px;
+        }
+
+        .data-input:focus { 
+            border-color: var(--accent); 
+            box-shadow: 0 0 15px var(--accent-glow); 
+        }
+
+        .sub-modes-container { 
+            display: flex; 
+            gap: 8px; 
+            margin-bottom: 25px; 
+        }
+
+        .sub-mode-btn { 
+            flex: 1; 
+            padding: 12px 5px; 
+            font-size: 11px; 
+            text-align: center; 
+            justify-content: center; 
+            margin-bottom: 0; 
+            font-weight: bold; 
+        }
+
+        /* --- تصميمات جديدة للثيرمو (المكبس والرسم البياني) --- */
+        input[type=range] { 
+            -webkit-appearance: none; 
+            width: 100%; 
+            background: transparent; 
+            margin-top: 15px; 
+            margin-bottom: 15px;
+        }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; 
+            height: 20px; 
+            width: 20px; 
+            border-radius: 50%; 
+            background: var(--thermo-color); 
+            cursor: pointer; 
+            margin-top: -8px; 
+            box-shadow: 0 0 10px var(--thermo-color); 
+        }
+        input[type=range]::-webkit-slider-runnable-track { 
+            width: 100%; 
+            height: 4px; 
+            cursor: pointer; 
+            background: #333; 
+            border-radius: 2px; 
+        }
+
+        .temp-graph-container { 
+            background: rgba(255, 51, 0, 0.05); 
+            padding: 15px; 
+            border-radius: 10px; 
+            border: 1px solid rgba(255, 51, 0, 0.2); 
+            margin-top: 15px; 
+        }
+        .temp-graph-title { 
+            font-size: 11px; 
+            color: #888; 
+            margin-bottom: 8px; 
+            letter-spacing: 1px; 
+            text-transform: uppercase;
+        }
+        .temp-track { 
+            width: 100%; 
+            height: 8px; 
+            background: #222; 
+            border-radius: 4px; 
+            overflow: hidden; 
+            position: relative; 
+        }
+        .temp-fill { 
+            width: 20%; 
+            height: 100%; 
+            background: linear-gradient(90deg, #ffcc00, #ff3300); 
+            transition: width 0.2s ease-out, background 0.2s ease-out; 
+        }
+        .temp-value-display { 
+            font-size: 20px; 
+            font-weight: 900; 
+            color: #fff; 
+            margin-top: 8px; 
+            text-align: right; 
+        }
+
+        /* --- اللوحة اليمنى (Sidebar Navigation) --- */
+        .sidebar { 
+            grid-area: sidebar; 
+            border-left: 1px solid var(--glass-border); 
+            padding: 30px; 
+            overflow-y: auto; 
+        }
+
+        .sidebar-title { 
+            font-size: 11px; 
+            text-transform: uppercase; 
+            color: var(--text-muted); 
+            margin-bottom: 20px; 
+            letter-spacing: 4px; 
+            font-weight: 800; 
+        }
+
+        .glass-btn { 
+            width: 100%; 
+            padding: 16px; 
+            background: rgba(255, 255, 255, 0.02); 
+            color: var(--text-main); 
+            border: 1px solid var(--glass-border); 
+            border-radius: 14px; 
+            text-align: left; 
+            cursor: pointer; 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            transition: 0.4s; 
+            margin-bottom: 12px; 
+            font-size: 14px; 
+        }
+
+        .glass-btn:hover, .glass-btn.active { 
+            background: rgba(0, 255, 204, 0.08); 
+            border-color: var(--accent); 
+            color: var(--accent); 
+        }
+
+        .glass-btn i { 
+            font-size: 18px; 
+            color: var(--accent); 
+            width: 30px; 
+            text-align: center; 
+        }
+
+        /* --- أزرار التشغيل الأساسية --- */
+        .core-btn { 
+            width: 100%; 
+            padding: 18px; 
+            border-radius: 14px; 
+            border: none; 
+            font-weight: 900; 
+            cursor: pointer; 
+            transition: 0.4s; 
+            margin-top: 15px; 
+            letter-spacing: 2px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 10px; 
+        }
+
+        .btn-run { 
+            background: linear-gradient(45deg, #00ffcc, #0099ff); 
+            color: #000; 
+        }
+
+        .btn-run:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 10px 25px var(--accent-glow); 
+        }
+
+        .btn-reset { 
+            background: rgba(255, 70, 70, 0.1); 
+            color: #ff4646; 
+            border: 1px solid rgba(255, 70, 70, 0.2); 
+        }
+
+        /* --- المنتصف (Iframe Canvas Simulator) --- */
+        .canvas-container { 
+            grid-area: canvas; 
+            padding: 25px; 
+            position: relative; 
+        }
+
+        #physics-frame { 
+            width: 100%; 
+            height: 100%; 
+            border: 1px solid var(--glass-border); 
+            border-radius: 40px; 
+            background: #000; 
+        }
+
+        /* --- كونسول الذكاء الاصطناعي (AI Chat) --- */
+        .ai-console { 
+            grid-area: ai; 
+            border-top: 1px solid var(--glass-border); 
+            border-left: 1px solid var(--glass-border); 
+            display: flex; 
+            flex-direction: column; 
+            background: rgba(0,0,0,0.5); 
+        }
+
+        .ai-header { 
+            padding: 18px 25px; 
+            border-bottom: 1px solid var(--glass-border); 
+            color: var(--accent); 
+            font-size: 12px; 
+            font-weight: 900; 
+            letter-spacing: 2px; 
+        }
+
+        .ai-messages { 
+            padding: 25px; 
+            overflow-y: auto; 
+            flex-grow: 1; 
+            font-size: 14px; 
+            color: #ddd; 
+            line-height: 1.8; 
+            font-family: 'Consolas', monospace; 
+        }
+
+        .ai-input-wrapper { 
+            padding: 20px; 
+            border-top: 1px solid var(--glass-border); 
+            display: flex; 
+            gap: 15px; 
+        }
+
+        .ai-input-wrapper input { 
+            flex-grow: 1; 
+            background: transparent; 
+            border: none; 
+            color: white; 
+            outline: none; 
+            font-size: 14px; 
+        }
+
+        /* تخصيص شريط التمرير */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <canvas id="bg-canvas"></canvas>
+
+    <div id="login-screen">
+        <div class="login-box glass" id="login-box-3d">
+            <h1>Z-LAB</h1>
+            <span class="auth-tag">Unified Physics Core</span>
+            
+            <input type="text" class="login-input" placeholder="Neural ID" value="Z-ADMIN-01">
+            <input type="password" class="login-input" placeholder="Security Key" value="**********">
+            
+            <button class="login-btn" onclick="initCore()">
+                <i class="fas fa-plug"></i> Initialize Core
+            </button>
+            
+            <div class="divider">SECURE ACCESS</div>
+            
+            <div id="google-btn-container" style="display: flex; justify-content: center; width: 100%; margin-top: 15px; transform: translateZ(40px);"></div>
+        </div>
+        <div id="boot-terminal">> KERNEL STANDBY...</div>
+    </div>
+
+    <div id="main-app">
+        <header class="glass">
+            <div class="brand-name">Z-LAB <span style="color: var(--accent); font-weight: 900;">V4.0</span></div>
+            <div style="display: flex; gap: 30px; align-items: center;">
+                
+                <div id="user-profile" style="display: none; align-items: center; gap: 12px; background: rgba(0, 255, 204, 0.1); padding: 5px 15px; border-radius: 20px; border: 1px solid var(--accent);">
+                    <img id="user-pic" src="" style="width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--accent);">
+                    <span id="user-name" style="font-size: 12px; font-weight: bold; color: #fff; letter-spacing: 1px;"></span>
+                </div>
+
+                <div id="api-status" style="font-size: 10px; color: var(--accent); font-weight: bold; letter-spacing: 2px;">
+                    <i class="fas fa-circle"></i> ENGINE ONLINE
+                </div>
+            </div>
+        </header>
+
+        <aside class="data-panel glass">
+            
+            <div id="panel-mechanics">
+                <div class="sidebar-title">Motion Type</div>
+                <div class="sub-modes-container">
+                    <button class="glass-btn sub-mode-btn" id="sub-freefall" onclick="setMechSubMode('mode_freefall')">Free Fall</button>
+                    <button class="glass-btn sub-mode-btn" id="sub-vertical" onclick="setMechSubMode('mode_vertical')">Vertical</button>
+                    <button class="glass-btn sub-mode-btn active" id="sub-projectile" onclick="setMechSubMode('mode_projectile')">Projectile</button>
+                </div>
+                
+                <div class="sidebar-title">Kinematics Data</div>
+                <div class="data-row">
+                    <span class="data-label">Gravity (g) [m/s²]</span>
+                    <input type="text" id="v-g" class="data-input" value="9.81" placeholder="?">
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Mass (m) [kg]</span>
+                    <input type="text" id="v-m" class="data-input" value="1.0" placeholder="?">
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Initial Velocity (v0) [m/s]</span>
+                    <input type="text" id="v-v0" class="data-input" value="15.0" placeholder="?">
+                </div>
+                <div class="data-row" id="angle-container">
+                    <span class="data-label" style="color: #00ffcc;">Launch Angle (deg)</span>
+                    <input type="text" id="v-angle" class="data-input" value="45" placeholder="?">
+                </div>
+                <div class="data-row">
+                    <span class="data-label" style="color: #ffcc00; font-size: 14px; font-weight: bold;">Time (Δt) [s]</span>
+                    <input type="text" id="v-t" class="data-input" placeholder="?">
+                </div>
+                
+                <p style="font-size: 11px; color: #888; text-align: center; margin-bottom: 10px;">
+                    Leave ANY field empty or type "?" for AI to solve it.
+                </p>
+                
+                <button class="core-btn" style="background: linear-gradient(45deg, #00ffcc, #0066ff); color: #000;" onclick="solveMechanicsAI()">
+                    <i class="fas fa-brain"></i> AI: SOLVE UNKNOWN
+                </button>
+            </div>
+
+            <div id="panel-circuits" style="display: none;">
+                <div class="sidebar-title" style="color: #ffcc00;">Circuit Control</div>
+                <p style="font-size:12px; color:#aaa; line-height: 1.6; padding: 10px; border-left: 2px solid #ffcc00; background: rgba(255,204,0,0.05); border-radius: 5px; margin-bottom: 20px;">
+                    Select a component on the grid, then use these buttons to adjust its value.
+                </p>
+                <div style="display: flex; gap: 10px; flex-direction: column;">
+                    <button class="core-btn" style="background: rgba(50, 180, 50, 0.15); color: #50b432; border: 1px solid rgba(50, 180, 50, 0.5); margin-top: 0;" onclick="adjustCircuitComponent(1)">
+                        <i class="fas fa-plus"></i> INCREASE VALUE
+                    </button>
+                    <button class="core-btn" style="background: rgba(180, 50, 50, 0.15); color: #ff4d4d; border: 1px solid rgba(180, 50, 50, 0.5); margin-top: 0;" onclick="adjustCircuitComponent(-1)">
+                        <i class="fas fa-minus"></i> DECREASE VALUE
+                    </button>
+                </div>
+            </div>
+
+            <div id="panel-quantum" style="display: none;">
+                <div class="sidebar-title" style="color: #ff33cc;">Quantum Controls</div>
+                <button class="glass-btn" onclick="sendQMode('Particle Mode')" style="border-color: #ff6600; color: #ff6600;">
+                    <i class="fas fa-circle"></i> Particle Mode
+                </button>
+                <button class="glass-btn" onclick="sendQMode('Wave Mode')" style="border-color: #00ccff; color: #00ccff;">
+                    <i class="fas fa-wave-square"></i> Wave Mode
+                </button>
+                <button class="glass-btn" onclick="sendQMode('Photon Mode')" style="border-color: #ffcc00; color: #ffcc00;">
+                    <i class="fas fa-star-of-life"></i> Photon (Quantum)
+                </button>
+                <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
+                    <div class="sidebar-title" style="color: #ff4d4d;">Observer Effect</div>
+                    <button class="glass-btn" id="q-cam-btn" onclick="toggleQCam()" style="justify-content: center; font-weight: bold; transition: all 0.3s ease;">
+                        <i class="fas fa-video-slash"></i> Camera: OFF
+                    </button>
+                </div>
+            </div>
+
+            <div id="panel-thermo" style="display: none;">
+                <div class="sidebar-title" style="color: var(--thermo-color);">Thermodynamics Data</div>
+                
+                <div class="data-row">
+                    <span class="data-label">Temperature (T) [Kelvin]</span>
+                    <input type="text" id="th-temp" class="data-input" value="300" placeholder="?" style="color: var(--thermo-color); border-color: rgba(255, 51, 0, 0.3);">
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Volume (V) [Liters]</span>
+                    <input type="text" id="th-vol" class="data-input" value="10" placeholder="?" style="color: var(--thermo-color); border-color: rgba(255, 51, 0, 0.3);">
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Moles (n)</span>
+                    <input type="text" id="th-mol" class="data-input" value="1" placeholder="?" style="color: var(--thermo-color); border-color: rgba(255, 51, 0, 0.3);">
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Pressure (P) [atm]</span>
+                    <input type="text" id="th-pres" class="data-input" placeholder="?" style="color: var(--thermo-color); border-color: rgba(255, 51, 0, 0.3);">
+                </div>
+                
+                <p style="font-size: 11px; color: #888; text-align: center; margin-bottom: 10px;">
+                    Leave ANY field empty or type "?" for AI to solve it.
+                </p>
+                
+                <button class="core-btn" style="background: linear-gradient(45deg, #ff5500, #ffcc00); color: #000; margin-top: 10px;" onclick="solveThermoAI()">
+                    <i class="fas fa-brain"></i> AI: SOLVE UNKNOWN
+                </button>
+
+                <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
+                    <div class="sidebar-title" style="color: var(--thermo-color);">Piston Control (Volume/Temp)</div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#fff;">
+                        <span>Lower Piston</span>
+                        <span id="vol-display" style="color:var(--thermo-color); font-weight:bold;">V = 10.0 L</span>
+                    </div>
+                    <input type="range" id="thermo-slider" min="2" max="10" step="0.1" value="10" oninput="updateThermoCeiling(this.value)">
+                    
+                    <div class="temp-graph-container">
+                        <div class="temp-graph-title">CORE TEMPERATURE (T ∝ 1/V)</div>
+                        <div class="temp-track">
+                            <div id="temp-bar" class="temp-fill"></div>
+                        </div>
+                        <div id="temp-display" class="temp-value-display">300 K</div>
+                    </div>
+                </div>
+
+            </div>
+
+        </aside>
+
+        <main class="canvas-container">
+            <iframe id="physics-frame" src="newton_sim.html"></iframe>
+        </main>
+
+        <aside class="sidebar glass">
+            <div class="sidebar-title">Physics Modules</div>
+            <button class="glass-btn active" id="m-mechanics" onclick="sendCmd('mode_mechanics')">
+                <i class="fas fa-rocket"></i> 1. Mechanics (3D)
+            </button>
+            <button class="glass-btn" id="m-circuits" onclick="sendCmd('mode_circuits')">
+                <i class="fas fa-microchip"></i> 2. Electricity (2D)
+            </button>
+            <button class="glass-btn" id="m-quantum" onclick="sendCmd('mode_quantum')">
+                <i class="fas fa-atom"></i> 3. Quantum Exp.
+            </button>
+            <button class="glass-btn" id="m-thermo" onclick="sendCmd('mode_thermo')">
+                <i class="fas fa-fire"></i> 4. Thermodynamics
+            </button>
+
+            <div style="margin-top: 40px;" id="run-btn-container">
+                <div class="sidebar-title">Global Operations</div>
+                <button class="core-btn btn-run" onclick="triggerSim()">
+                    <i class="fas fa-bolt"></i> RUN SIMULATION
+                </button>
+                <button class="core-btn btn-reset" onclick="location.reload()">
+                    <i class="fas fa-sync"></i> RESTART SYSTEM
+                </button>
+            </div>
+        </aside>
+
+        <section class="ai-console glass">
+            <div class="ai-header"><i class="fas fa-robot"></i> AI RESEARCH ASSISTANT</div>
+            <div class="ai-messages" id="ai-logs">
+                <div style="color: #555;">[Handshake Successful] AI is connected to Live UI Data...</div>
+            </div>
+            <div class="ai-input-wrapper">
+                <input type="text" id="ai-in" placeholder="Ask AI about what you see on the screen...">
+                <button class="login-btn" style="width: auto; padding: 10px 25px; font-size: 11px; margin-bottom: 0;" onclick="askAIText()">SEND</button>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // ---------------------------------------------------
+        // 1. إعدادات جوجل (Google Identity Services)
+        // ---------------------------------------------------
+       
+        // ---------------------------------------------------
+        // 1. نظام تسجيل دخول جوجل الحقيقي (Authentication & JWT)
+        // ---------------------------------------------------
+       // رادار يراقب تحميل مكتبة جوجل
+        let googleRadar = setInterval(() => {
+            // إذا جوجل تحملت وصارت جاهزة
+            if(typeof google !== 'undefined' && google.accounts) {
+                clearInterval(googleRadar); // طفي الرادار بعد ما نحتاجه
+                
+                // 1. دخل المفتاح مالتك
+                google.accounts.id.initialize({ 
+                    client_id: "950698023675-rmenc4ppb2frjmlteodbkiaj3ahltoh4.apps.googleusercontent.com", 
+                    callback: handleCredentialResponse 
+                });
+
+                // 2. ارسم الزر بداخل الصندوق
+                google.accounts.id.renderButton(
+                    document.getElementById("google-btn-container"),
+                    { 
+                        theme: "filled_black", 
+                        size: "large", 
+                        shape: "pill", 
+                        width: 280 
+                    }
+                );
+            }
+        }, 200); // يفحص كل 200 ملي ثانية
+
+        // دالة فك التشفير لسحب بيانات حساب جوجل
+        function decodeJwtResponse(token) {
+            let base64Url = token.split('.')[1];
+            let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            let jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            return JSON.parse(jsonPayload);
+        }
+
+        function handleCredentialResponse(response) { 
+            // 1. فك التشفير للرد الجاي من سيرفرات جوجل
+            const responsePayload = decodeJwtResponse(response.credential);
+            
+            // 2. سحب الاسم والصورة
+            const userName = responsePayload.name;
+            const userPic = responsePayload.picture;
+
+            // 3. عرض البيانات بالواجهة (Header)
+            document.getElementById('user-name').innerText = userName;
+            document.getElementById('user-pic').src = userPic;
+            document.getElementById('user-profile').style.display = 'flex';
+
+            // 4. إدخال المستخدم للنظام بعد التحقق بنجاح
+            initCore();
+            
+            // 5. إرسال رسالة ترحيب باسمه للكونسول مال الذكاء الاصطناعي
+            setTimeout(() => {
+                addLog(`Authentication Verified. Welcome Commander: ${userName}`);
+            }, 1000);
+        }
+
+        // دالة وحدة بس لتشغيل نافذة جوجل
+        function triggerGoogleLogin() { 
+            // هذا الزر هسه يفتح نافذة جوجل الرسمية وما يعبر المستخدم إلا إذا سجل دخول صدك
+            if(typeof google !== 'undefined' && google.accounts) {
+                google.accounts.id.prompt(); 
+            } else {
+                alert("لم يتم تحميل مكتبة جوجل، تأكد من اتصالك بالإنترنت.");
+            }
+        }
+
+        // ---------------------------------------------------
+        // 2. الخلفية التفاعلية: الجزيئات (Interactive Canvas)
+        // ---------------------------------------------------
+        const loginScreen = document.getElementById('login-screen');
+        const loginBox3D = document.getElementById('login-box-3d');
+        const canvas = document.getElementById('bg-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let particles = [];
+        let mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2, radius: 150 };
+
+        document.addEventListener('mousemove', (e) => {
+            if (loginScreen.style.display !== 'none' && loginBox3D) {
+                let xAxis = (window.innerWidth / 2 - e.pageX) / 30;
+                let yAxis = (window.innerHeight / 2 - e.pageY) / 30;
+                loginBox3D.style.transform = `rotateY(${xAxis}deg) rotateX(${yAxis}deg)`;
+            }
+            mouse.x = e.clientX; 
+            mouse.y = e.clientY; 
+        });
+
+        class Particle {
+            constructor() { 
+                this.x = Math.random() * innerWidth; 
+                this.y = Math.random() * innerHeight; 
+                this.size = Math.random() * 2 + 1; 
+                this.vx = (Math.random() - 0.5) * 1.5; 
+                this.vy = (Math.random() - 0.5) * 1.5; 
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                if (this.x < 0 || this.x > innerWidth) this.vx *= -1;
+                if (this.y < 0 || this.y > innerHeight) this.vy *= -1;
+                
+                let dx = mouse.x - this.x; let dy = mouse.y - this.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < mouse.radius) { 
+                    this.x -= dx / 10; this.y -= dy / 10; 
+                }
+            }
+            draw() { 
+                ctx.fillStyle = 'rgba(0, 255, 204, 0.8)'; 
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); 
+            }
+        }
+
+        function initParticles() { 
+            if(!canvas) return;
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight; 
+            particles = []; 
+            for (let i = 0; i < 130; i++) particles.push(new Particle()); 
+        }
+
+        function animateParticles() { 
+            ctx.clearRect(0, 0, innerWidth, innerHeight); 
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].update(); particles[i].draw();
+                for (let j = i; j < particles.length; j++) {
+                    let dx = particles[i].x - particles[j].x; 
+                    let dy = particles[i].y - particles[j].y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 120) {
+                        ctx.strokeStyle = `rgba(0, 255, 204, ${0.5 - dist / 240})`;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(particles[j].x, particles[j].y); ctx.stroke();
+                    }
+                }
+            } 
+            requestAnimationFrame(animateParticles); 
+        }
+        
+        initParticles(); animateParticles();
+        window.addEventListener('resize', initParticles);
+
+        let termIndex = 0;
+        const terminalPhrases = ["> INITIALIZING KERNEL...", "> CONNECTING TO SECURE SERVERS...", "> CALIBRATING SENSORS...", "> READY FOR LOGIN."];
+        setInterval(() => {
+            let term = document.getElementById('boot-terminal');
+            if (loginScreen.style.display !== 'none' && term) {
+                term.innerText = terminalPhrases[termIndex];
+                termIndex = (termIndex + 1) % terminalPhrases.length;
+            }
+        }, 1500);
+
+        function initCore() {
+            loginScreen.style.opacity = '0';
+            setTimeout(() => { 
+                loginScreen.style.display = 'none'; 
+                document.getElementById('main-app').style.display = 'grid'; 
+                setTimeout(() => { document.getElementById('main-app').style.opacity = '1'; }, 100); 
+            }, 800);
+        }
+
+        // ---------------------------------------------------
+        // 4. أزرار التحكم واللوحات (UI Navigation)
+        // ---------------------------------------------------
+        let currentMechMode = 'Projectile'; 
+
+        function setMechSubMode(mode) {
+            document.getElementById('sub-freefall').classList.remove('active');
+            document.getElementById('sub-vertical').classList.remove('active');
+            document.getElementById('sub-projectile').classList.remove('active');
+            
+            if(mode === 'mode_freefall') { 
+                currentMechMode = "Free Fall"; 
+                document.getElementById('sub-freefall').classList.add('active'); 
+                document.getElementById('angle-container').style.display = 'none';
+            } else if (mode === 'mode_vertical') { 
+                currentMechMode = "Vertical Throw"; 
+                document.getElementById('sub-vertical').classList.add('active'); 
+                document.getElementById('angle-container').style.display = 'none';
+            } else { 
+                currentMechMode = "Projectile"; 
+                document.getElementById('sub-projectile').classList.add('active'); 
+                document.getElementById('angle-container').style.display = 'block';
+            }
+            
+            const frame = document.getElementById('physics-frame');
+            if(frame && frame.contentWindow) { frame.contentWindow.postMessage({ action: mode }, '*'); }
+            addLog(`Switched Mechanics Mode to: ${currentMechMode}`);
+        }
+
+        function sendCmd(action) {
+            document.getElementById('panel-mechanics').style.display = 'none'; 
+            document.getElementById('panel-circuits').style.display = 'none'; 
+            document.getElementById('panel-quantum').style.display = 'none'; 
+            document.getElementById('panel-thermo').style.display = 'none'; 
+            document.getElementById('run-btn-container').style.display = 'none';
+            document.querySelectorAll('.sidebar .glass-btn').forEach(btn => btn.classList.remove('active'));
+            
+            const frame = document.getElementById('physics-frame');
+            if (action === 'mode_circuits') { document.getElementById('m-circuits').classList.add('active'); document.getElementById('panel-circuits').style.display = 'block'; if (!frame.src.includes('circuit_sim.html')) frame.src = 'circuit_sim.html'; addLog("System Switched to: CIRCUIT BUILDER"); } 
+            else if (action === 'mode_quantum') { document.getElementById('m-quantum').classList.add('active'); document.getElementById('panel-quantum').style.display = 'block'; if (!frame.src.includes('quantum_sim.html')) frame.src = 'quantum_sim.html'; addLog("System Switched to: QUANTUM MECHANICS"); }
+            else if (action === 'mode_thermo') { document.getElementById('m-thermo').classList.add('active'); document.getElementById('panel-thermo').style.display = 'block'; if (!frame.src.includes('thermo_sim.html')) frame.src = 'thermo_sim.html'; addLog("System Switched to: THERMODYNAMICS ENGINE"); }
+            else { document.getElementById('m-mechanics').classList.add('active'); document.getElementById('panel-mechanics').style.display = 'block'; document.getElementById('run-btn-container').style.display = 'block'; if (!frame.src.includes('newton_sim.html')) frame.src = 'newton_sim.html'; addLog("System Switched to: CLASSICAL MECHANICS"); }
+        }
+
+        function triggerSim() {
+            const frame = document.getElementById('physics-frame');
+            if(frame && frame.contentWindow) {
+                frame.contentWindow.postMessage({ 
+                    action: 'start_sim', 
+                    g: parseFloat(document.getElementById('v-g').value) || 0, 
+                    v0: parseFloat(document.getElementById('v-v0').value) || 0, 
+                    angle: parseFloat(document.getElementById('v-angle').value) || 45,
+                    mode: currentMechMode 
+                }, '*');
+            }
+            addLog("Executing Simulation...");
+        }
+
+        function adjustCircuitComponent(delta) { const frame = document.getElementById('physics-frame'); if(frame && frame.contentWindow) { frame.contentWindow.postMessage({ action: 'adjust_value', amount: delta }, '*'); } }
+        function sendQMode(mode) { const frame = document.getElementById('physics-frame'); if(frame && frame.contentWindow) { frame.contentWindow.postMessage({ action: 'q_mode', mode: mode }, '*'); } addLog(`Quantum Core: Mode changed to ${mode}`); }
+        function addThermoParticles() { const frame = document.getElementById('physics-frame'); if(frame && frame.contentWindow) { frame.contentWindow.postMessage({ action: 'add_particles' }, '*'); } }
+
+        // التعديل: تفعيل زر الكاميرا
+        let isQCamOn = false;
+        function toggleQCam() { 
+            isQCamOn = !isQCamOn;
+            const btn = document.getElementById('q-cam-btn');
+            if(isQCamOn) {
+                btn.innerHTML = '<i class="fas fa-video"></i> Camera: ON (Measuring)';
+                btn.style.color = '#ff4d4d';
+                btn.style.borderColor = '#ff4d4d';
+                btn.style.background = 'rgba(255, 77, 77, 0.1)';
+            } else {
+                btn.innerHTML = '<i class="fas fa-video-slash"></i> Camera: OFF';
+                btn.style.color = '';
+                btn.style.borderColor = '';
+                btn.style.background = '';
+            }
+            const frame = document.getElementById('physics-frame'); 
+            if(frame && frame.contentWindow) { 
+                frame.contentWindow.postMessage({ action: 'q_cam', state: isQCamOn }, '*'); 
+            } 
+        }
+
+        // التعديل: تفعيل المكبس ومستوى الحرارة (Thermodynamics Slider)
+        function updateThermoCeiling(val) { 
+            document.getElementById('vol-display').innerText = `V = ${parseFloat(val).toFixed(1)} L`;
+            document.getElementById('th-vol').value = val;
+            
+            // معادلة مبسطة للربط بين الحجم والحرارة والضغط
+            let temp = 3000 / parseFloat(val);
+            let pres = 10 / parseFloat(val); 
+            
+            document.getElementById('th-temp').value = temp.toFixed(1);
+            document.getElementById('th-pres').value = pres.toFixed(2);
+            document.getElementById('temp-display').innerText = `${Math.round(temp)} K`;
+            
+            // تحديث الرسم البياني
+            let percent = Math.min(100, (temp / 1500) * 100);
+            document.getElementById('temp-bar').style.width = `${percent}%`;
+            
+            if(percent > 60) {
+                document.getElementById('temp-bar').style.background = 'linear-gradient(90deg, #ff3300, #ff0000)';
+            } else {
+                document.getElementById('temp-bar').style.background = 'linear-gradient(90deg, #ffcc00, #ff3300)';
+            }
+
+            const frame = document.getElementById('physics-frame'); 
+            if(frame && frame.contentWindow) { 
+                frame.contentWindow.postMessage({ action: 'set_height', value: val }, '*'); 
+            } 
+        }
+
+        // ---------------------------------------------------
+        // 5. نظام الذكاء الاصطناعي (API Integration Fix)
+        // ---------------------------------------------------
+        window.addEventListener('message', (e) => { 
+            if(e.data === 'ENGINE_READY') addLog("Engine Synchronized Successfully."); 
+        });
+
+        function addLog(msg) { 
+            const box = document.getElementById('ai-logs'); 
+            box.innerHTML += `<div style="color:#00ffcc; margin-top:10px;">[SYS]: ${msg}</div>`; 
+            box.scrollTop = box.scrollHeight; 
+        }
+
+        function getVal(id) {
+            let el = document.getElementById(id);
+            if(!el) return "Unknown";
+            let val = el.value.trim();
+            return (val === "" || val === "?") ? "Unknown" : val;
+        }
+
+        function solveMechanicsAI() { 
+            askAI("Look at the Mechanics data. Find ANY parameter that is 'Unknown' (like Time, Mass, Gravity, Velocity) and calculate it using physics formulas. Explain steps in Arabic."); 
+        }
+
+        function solveThermoAI() { 
+            askAI("Look at the Thermodynamics data. Find ANY parameter that is 'Unknown' (like Pressure, Temp, Volume, Moles) and calculate it using the Ideal Gas Law. Explain steps in Arabic."); 
+        }
+
+        function askAIText() { 
+            askAI(null); 
+        }
+
+        // التعديل: الذكاء الاصطناعي اللي يقرأ كلشي بالشاشة + الـ Fallback الشغال
+       async function askAI(customPrompt = null) {
+    const userInput = customPrompt || document.getElementById('ai-in').value;
+    if(!userInput) return;
+
+    const box = document.getElementById('ai-logs'); 
+    box.innerHTML += `<div style="color: white; margin-top: 15px;"><b>> Operator:</b> ${userInput}</div>`; 
+    document.getElementById('ai-in').value = ""; 
+    box.scrollTop = box.scrollHeight; 
+
+    // تجميع بيانات الشاشة بناءً على القسم المفتوح
+    let activePanel = "Unknown";
+    let screenData = "";
+
+    if (document.getElementById('panel-mechanics').style.display !== 'none') {
+        activePanel = "Classical Mechanics";
+        screenData = `Mode: ${typeof currentMechMode !== 'undefined' ? currentMechMode : 'Projectile'}. Gravity: ${getVal('v-g')} m/s^2, Mass: ${getVal('v-m')} kg, Initial Velocity: ${getVal('v-v0')} m/s, Angle: ${getVal('v-angle')} deg, Time: ${getVal('v-t')} s.`;
+    } else if (document.getElementById('panel-circuits').style.display !== 'none') {
+        activePanel = "Electricity / Circuits";
+        screenData = `User is interacting with the 2D Circuit Grid.`;
+    } else if (document.getElementById('panel-quantum').style.display !== 'none') {
+        activePanel = "Quantum Mechanics";
+        screenData = `Double Slit Experiment. Observer Camera Status: ${isQCamOn ? 'ON (Measuring, Wave Function Collapsed, acting as particles)' : 'OFF (Interference pattern, acting as waves)'}.`;
+    } else if (document.getElementById('panel-thermo').style.display !== 'none') {
+        activePanel = "Thermodynamics";
+        screenData = `Gas container with movable piston. Temp: ${getVal('th-temp')} K, Volume: ${getVal('th-vol')} L, Moles: ${getVal('th-mol')}, Pressure: ${getVal('th-pres')} atm.`;
+    }
+
+    const systemContext = `You are Z-LAB AI, an expert physics tutor. Answer in Arabic. 
+    Crucial: You must "see" the user's screen. The user is currently in the [${activePanel}] module. 
+    Live Screen Telemetry: ${screenData}. 
+    Explain the physical phenomena accurately based on this data.`;
+
+    // قائمة النماذج رجعت مثل ما كانت
+    const engines = [
+        "deepseek/deepseek-chat",
+        "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "openrouter/auto"
+    ];
+
+    let success = false;
+    let lastError = "";
+
+    for (let model of engines) {
+        if (success) break;
+        
+        try {
+            // الاتصال برابط كلاود فلير الآمن
+            const response = await fetch("https://polished-sun-25a6.mahsneasen.workers.dev", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: model, // يرسل اسم الموديل لكلاود فلير
+                    messages: [
+                        { role: "system", content: systemContext },
+                        { role: "user", content: userInput }
+                    ],
+                    max_tokens: 800
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.choices && data.choices.length > 0) {
+                let aiText = data.choices[0].message.content.replace(/\n/g, "<br>");
+                box.innerHTML += `
+                    <div style="background: rgba(0, 255, 204, 0.05); padding: 15px; border-radius: 10px; border-left: 3px solid var(--accent); color:#ddd; margin-top: 10px;">
+                        <b style="color: var(--accent);">Z-LAB AI (${model.split('/').pop()}):</b><br><br>${aiText}
+                    </div>`;
+                success = true;
+            } else if (data.error) {
+                lastError = data.error.message;
+                console.warn(`Model ${model} failed: ${lastError}`);
+            }
+        } catch (e) {
+            lastError = e.message;
+        }
+    }
+
+    if (!success) {
+        box.innerHTML += `
+            <div style="color: var(--error); margin-top: 10px; background: rgba(255,0,0,0.1); padding: 10px; border: 1px solid var(--error);">
+                <b>[CRITICAL ERROR]:</b> جميع البوابات مغلقة حالياً.<br>
+                <small style="color: #ccc;">السبب الأخير: ${lastError}</small>
+                <br><button onclick="askAI('${userInput}')" style="background:var(--accent); color:#000; border:none; padding:5px 10px; border-radius:5px; margin-top:10px; cursor:pointer; font-weight:bold;">إعادة محاولة الاتصال</button>
+            </div>`;
+    }
+    box.scrollTop = box.scrollHeight;
+}
+    </script>
+</body>
+</html>

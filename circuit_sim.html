@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Z-LAB | Circuit Simulator 2D</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background-color: rgb(18, 20, 25); 
+            overflow: hidden; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas { 
+            display: block; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="simCanvas"></canvas>
+
+<script>
+    // ==========================================
+    // 1. الإعدادات الأساسية والتهيئة
+    // ==========================================
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // الأبعاد الديناميكية
+    let WIDTH = window.innerWidth;
+    let HEIGHT = window.innerHeight;
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+
+    // قاموس الألوان
+    const COLORS = {
+        BG: "rgb(18, 20, 25)", 
+        PANEL: "rgb(28, 32, 40)", 
+        GRID: "rgb(40, 45, 55)",
+        TEXT: "rgb(220, 220, 220)", 
+        ACCENT: "rgb(0, 200, 150)", 
+        DANGER: "rgb(255, 60, 60)",
+        WARNING: "rgb(255, 180, 0)", 
+        WIRE: "rgb(150, 150, 150)", 
+        ELECTRON: "rgb(255, 255, 50)",
+        NODE: "rgb(200, 80, 80)", 
+        SELECTED: "rgb(100, 255, 100)", 
+        MAGNETIC: "rgb(100, 200, 255)",
+        CAPACITOR: "rgb(50, 150, 200)", 
+        WHITE: "rgb(255,255,255)", 
+        BLACK: "rgb(0,0,0)"
+    };
+
+    // ألوان المقاومات
+    const BAND_COLORS = [
+        "rgb(0,0,0)", "rgb(139,69,19)", "rgb(255,0,0)", 
+        "rgb(255,140,0)", "rgb(255,255,0)", "rgb(0,128,0)", 
+        "rgb(0,0,255)", "rgb(128,0,128)"
+    ];
+    
+    const GRID_SIZE = 20;
+
+    // دالة محاذاة العناصر مع الشبكة
+    function snap(val) { 
+        return Math.round(val / GRID_SIZE) * GRID_SIZE; 
+    }
+
+    // دالة رسم مستطيل بحواف دائرية (مساعدة)
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2; 
+        if (h < 2 * r) r = h / 2;
+        this.beginPath(); 
+        this.moveTo(x + r, y); 
+        this.arcTo(x + w, y, x + w, y + h, r);
+        this.arcTo(x + w, y + h, x, y + h, r); 
+        this.arcTo(x, y + h, x, y, r);
+        this.arcTo(x, y, x + w, y, r); 
+        this.closePath(); 
+        return this;
+    }
+
+    // ==========================================
+    // 2. نظام تسجيل الأحداث (Console Logger)
+    // ==========================================
+    class Logger {
+        static logs = [];
+        static log(msg, color = COLORS.TEXT) {
+            if (!this.logs.length || this.logs[this.logs.length - 1].msg !== msg) {
+                this.logs.push({msg, color, time: Date.now()});
+            }
+            if (this.logs.length > 6) { 
+                this.logs.shift();
+            }
+        }
+    }
+
+    // ==========================================
+    // 3. نظام العقد (Nodes) والأسلاك (Wires)
+    // ==========================================
+    class Node {
+        constructor(parent, offset_x, offset_y) {
+            this.parent = parent;
+            this.base_offset_x = offset_x; 
+            this.base_offset_y = offset_y;
+            this.offset_x = offset_x; 
+            this.offset_y = offset_y;
+            this.x = 0; 
+            this.y = 0;
+            this.is_selected = false; 
+            this.voltage = 0.0;
+            this.is_fixed = false; 
+            this.connections = [];
+        }
+        
+        update_pos() {
+            this.x = snap(this.parent.rect.x + this.parent.rect.w / 2 + this.offset_x);
+            this.y = snap(this.parent.rect.y + this.parent.rect.h / 2 + this.offset_y);
+        }
+        
+        draw(ctx) {
+            ctx.fillStyle = this.is_selected ? COLORS.SELECTED : COLORS.NODE;
+            ctx.beginPath(); 
+            ctx.arc(this.x, this.y, 6, 0, Math.PI * 2); 
+            ctx.fill();
+            ctx.strokeStyle = COLORS.WHITE; 
+            ctx.lineWidth = 1; 
+            ctx.stroke();
+        }
+    }
+
+    class Wire {
+        constructor(node_a, node_b) {
+            this.node_a = node_a; 
+            this.node_b = node_b;
+            this.resistance = 0.05; 
+            this.current = 0.0; 
+            this.electron_offset = 0.0;
+        }
+        
+        get_points() {
+            let mid_x = snap((this.node_a.x + this.node_b.x) / 2);
+            return [
+                {x: this.node_a.x, y: this.node_a.y}, 
+                {x: mid_x, y: this.node_a.y}, 
+                {x: mid_x, y: this.node_b.y}, 
+                {x: this.node_b.x, y: this.node_b.y}
+            ];
+        }
+        
+        check_click(pos) {
+            let pts = this.get_points();
+            for (let i = 0; i < pts.length - 1; i++) {
+                let x1 = pts[i].x, y1 = pts[i].y, x2 = pts[i+1].x, y2 = pts[i+1].y;
+                let dist = Math.hypot(
+                    pos.x - Math.max(Math.min(x1, x2), Math.min(Math.max(x1, x2), pos.x)),
+                    pos.y - Math.max(Math.min(y1, y2), Math.min(Math.max(y1, y2), pos.y))
+                );
+                if (dist < 8) return true;
+            }
+            return false;
+        }
+        
+        draw(ctx) {
+            let pts = this.get_points();
+            ctx.strokeStyle = COLORS.WIRE; 
+            ctx.lineWidth = 4;
+            ctx.beginPath(); 
+            ctx.moveTo(pts[0].x, pts[0].y);
+            
+            for(let i = 1; i < pts.length; i++) {
+                ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            ctx.stroke();
+
+            // رسم الإلكترونات المتحركة
+            if (Math.abs(this.current) > 0.01) {
+                let speed = Math.min(Math.abs(this.current) * 3.0, 15.0);
+                this.electron_offset = (this.electron_offset + speed) % 30;
+                let mid_x = pts[1].x;
+                let l1 = Math.abs(mid_x - this.node_a.x);
+                let l2 = Math.abs(this.node_b.y - this.node_a.y);
+                let l3 = Math.abs(this.node_b.x - mid_x);
+                let tot_len = l1 + l2 + l3;
+                
+                if (tot_len === 0) return;
+
+                let direction = this.current > 0 ? 1 : -1;
+                let dx1 = mid_x > this.node_a.x ? 1 : -1;
+                let dy2 = this.node_b.y > this.node_a.y ? 1 : -1;
+                let dx3 = this.node_b.x > mid_x ? 1 : -1;
+
+                ctx.fillStyle = COLORS.ELECTRON;
+                for (let i = 0; i < Math.floor(tot_len / 30) + 1; i++) {
+                    let d = ((this.electron_offset * direction) + (i * 30));
+                    while(d < 0) d += tot_len; 
+                    d %= tot_len;
+                    
+                    let ex, ey;
+                    if (d <= l1) { 
+                        ex = this.node_a.x + dx1 * d; 
+                        ey = this.node_a.y; 
+                    } else if (d <= l1 + l2) { 
+                        ex = mid_x; 
+                        ey = this.node_a.y + dy2 * (d - l1); 
+                    } else { 
+                        ex = mid_x + dx3 * (d - l1 - l2); 
+                        ey = this.node_b.y; 
+                    }
+                    
+                    ctx.beginPath(); 
+                    ctx.arc(ex, ey, 3, 0, Math.PI * 2); 
+                    ctx.fill();
+                }
+            }
+        }
+    }
+
+    // ==========================================
+    // 4. الكلاسات الفيزيائية (المكونات)
+    // ==========================================
+    class Component {
+        constructor(x, y, w, h, name) {
+            this.base_w = snap(w); 
+            this.base_h = snap(h);
+            this.rect = {x: snap(x), y: snap(y), w: this.base_w, h: this.base_h};
+            this.name = name; 
+            this.nodes = [];
+            this.is_dragging = false; 
+            this.is_selected = false; 
+            this.is_burnt = false;
+            this.offset_x = 0; 
+            this.offset_y = 0;
+            this.current = 0.0; 
+            this.voltage_drop = 0.0; 
+            this.power = 0.0;
+            this.temp_k = 298.15; 
+            this.resistance = 10.0; 
+            this.rotation = 0;
+        }
+        
+        get node_a() { return this.nodes.length > 0 ? this.nodes[0] : null; }
+        get node_b() { return this.nodes.length > 1 ? this.nodes[1] : null; }
+
+        update() {
+            this.rect.x = snap(this.rect.x); 
+            this.rect.y = snap(this.rect.y);
+            this.nodes.forEach(n => n.update_pos());
+        }
+        
+        rotate() {
+            this.rotation = 1 - this.rotation;
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            [this.rect.w, this.rect.h] = [this.rect.h, this.rect.w];
+            
+            this.rect.x = cx - this.rect.w / 2; 
+            this.rect.y = cy - this.rect.h / 2;
+            
+            this.nodes.forEach(n => { 
+                [n.offset_x, n.offset_y] = [n.offset_y, n.offset_x]; 
+            });
+            this.update(); 
+            Logger.log(`${this.name} Rotated.`, COLORS.ACCENT);
+        }
+        
+        draw_base(ctx) {
+            if (this.is_selected) {
+                ctx.strokeStyle = COLORS.SELECTED; 
+                ctx.lineWidth = 2;
+                ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 5).stroke();
+            }
+            this.nodes.forEach(n => n.draw(ctx));
+        }
+    }
+
+    class Battery extends Component {
+        constructor(x, y) {
+            super(x, y, 80, 120, "Battery");
+            this.voltage = 12.0; 
+            this.internal_r = 1.0;
+            this.nodes.push(new Node(this, 0, -60), new Node(this, 0, 60));
+            this.update();
+        }
+        draw(ctx) {
+            ctx.fillStyle = "rgb(40,40,40)"; 
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 8).fill();
+            ctx.fillStyle = "rgb(200,150,50)";
+            
+            if (this.rotation === 0) {
+                ctx.roundRect(this.rect.x, this.rect.y + 40, this.rect.w, 80, 8).fill();
+                ctx.fillStyle = COLORS.WHITE; 
+                ctx.fillRect(this.rect.x + this.rect.w / 2 - 15, this.rect.y - 10, 10, 10);
+                ctx.fillRect(this.rect.x + this.rect.w / 2 + 5, this.rect.y - 10, 16, 10);
+            } else {
+                ctx.roundRect(this.rect.x, this.rect.y, 80, this.rect.h, 8).fill();
+                ctx.fillStyle = COLORS.WHITE; 
+                ctx.fillRect(this.rect.x + this.rect.w, this.rect.y + this.rect.h / 2 - 15, 10, 10);
+                ctx.fillRect(this.rect.x + this.rect.w, this.rect.y + this.rect.h / 2 + 5, 10, 16);
+            }
+            
+            ctx.fillStyle = COLORS.WHITE; 
+            ctx.font = "bold 16px Consolas";
+            ctx.fillText(`${this.voltage}V`, this.rect.x + 10, this.rect.y + 25);
+            this.draw_base(ctx);
+        }
+    }
+
+    class Resistor extends Component {
+        constructor(x, y) {
+            super(x, y, 120, 40, "Resistor");
+            this.resistance = 10.0; 
+            this.max_power = 100.0;
+            this.nodes.push(new Node(this, -60, 0), new Node(this, 60, 0));
+            this.update();
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.is_burnt ? "rgb(60,60,60)" : "rgb(210,180,140)";
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 15).fill();
+            
+            if (!this.is_burnt) {
+                let val_str = String(Math.floor(this.resistance));
+                let c1 = BAND_COLORS[parseInt(val_str[0]) % BAND_COLORS.length];
+                let c2 = val_str.length > 1 ? BAND_COLORS[parseInt(val_str[1]) % BAND_COLORS.length] : COLORS.BLACK;
+                let c3 = val_str.length > 1 ? BAND_COLORS[val_str.length - 2] : COLORS.BLACK;
+                
+                let bands = [c1, c2, c3, "rgb(212,175,55)"];
+                bands.forEach((c, i) => {
+                    ctx.fillStyle = c;
+                    if (this.rotation === 0) {
+                        ctx.fillRect(this.rect.x + 25 + i * 20, this.rect.y, 8, this.rect.h);
+                    } else {
+                        ctx.fillRect(this.rect.x, this.rect.y + 25 + i * 20, this.rect.w, 8);
+                    }
+                });
+            } else {
+                ctx.fillStyle = COLORS.DANGER; 
+                ctx.font = "13px Consolas"; 
+                ctx.fillText("BURNT", this.rect.x + 5, this.rect.y - 5);
+            }
+            
+            ctx.fillStyle = COLORS.WHITE; 
+            ctx.font = "13px Consolas";
+            ctx.fillText(`${this.resistance}Ω`, this.rect.x + this.rect.w / 2 - 15, this.rect.y + this.rect.h / 2 + 5);
+            this.draw_base(ctx);
+        }
+    }
+
+    class Bulb extends Component {
+        constructor(x, y) {
+            super(x, y, 60, 60, "Bulb");
+            this.resistance = 15.0; 
+            this.max_power = 80.0;
+            this.nodes.push(new Node(this, -30, 30), new Node(this, 30, 30));
+            this.update();
+        }
+        draw(ctx) {
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            ctx.fillStyle = this.is_burnt ? "rgb(40,40,40)" : (Math.abs(this.current) > 0.1 ? "rgb(255,255,100)" : "rgb(120,120,120)");
+            ctx.beginPath(); 
+            ctx.arc(cx, cy, 30, 0, Math.PI * 2); 
+            ctx.fill();
+            
+            if (Math.abs(this.current) > 0.1 && !this.is_burnt) {
+                ctx.strokeStyle = "rgb(255,255,0)"; 
+                ctx.lineWidth = 2;
+                ctx.beginPath(); 
+                ctx.arc(cx, cy, 38, 0, Math.PI * 2); 
+                ctx.stroke();
+            }
+            
+            ctx.fillStyle = "rgb(100,100,100)";
+            if (this.rotation === 0) {
+                ctx.fillRect(cx - 15, this.rect.y + this.rect.h - 10, 30, 20);
+            } else {
+                ctx.fillRect(this.rect.x + this.rect.w - 10, cy - 15, 20, 30);
+            }
+
+            if (this.is_burnt) { 
+                ctx.fillStyle = COLORS.DANGER; 
+                ctx.font = "bold 16px Consolas"; 
+                ctx.fillText("EXPLODED!", this.rect.x - 15, this.rect.y - 5); 
+            }
+            this.draw_base(ctx);
+        }
+    }
+
+    class Capacitor extends Component {
+        constructor(x, y) {
+            super(x, y, 60, 60, "Capacitor");
+            this.capacitance = 0.01; 
+            this.charge = 0.0; 
+            this.resistance = 0.001;
+            this.nodes.push(new Node(this, -30, 0), new Node(this, 30, 0));
+            this.update();
+        }
+        draw(ctx) {
+            ctx.fillStyle = COLORS.CAPACITOR; 
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 5).fill();
+            ctx.strokeStyle = COLORS.WHITE; 
+            ctx.lineWidth = 4;
+            
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            ctx.beginPath();
+            if (this.rotation === 0) {
+                ctx.moveTo(cx - 10, this.rect.y + 10); 
+                ctx.lineTo(cx - 10, this.rect.y + this.rect.h - 10);
+                ctx.moveTo(cx + 10, this.rect.y + 10); 
+                ctx.lineTo(cx + 10, this.rect.y + this.rect.h - 10);
+            } else {
+                ctx.moveTo(this.rect.x + 10, cy - 10); 
+                ctx.lineTo(this.rect.x + this.rect.w - 10, cy - 10);
+                ctx.moveTo(this.rect.x + 10, cy + 10); 
+                ctx.lineTo(this.rect.x + this.rect.w - 10, cy + 10);
+            }
+            ctx.stroke();
+            
+            let v_c = this.capacitance > 0 ? this.charge / this.capacitance : 0;
+            ctx.fillStyle = COLORS.BLACK; 
+            ctx.font = "13px Consolas"; 
+            ctx.fillText(`${v_c.toFixed(1)}V`, this.rect.x + 15, this.rect.y + 15);
+            this.draw_base(ctx);
+        }
+    }
+
+    class Switch extends Component {
+        constructor(x, y) {
+            super(x, y, 100, 40, "Switch");
+            this.is_closed = false; 
+            this.resistance = 9999999.0;
+            this.nodes.push(new Node(this, -50, 0), new Node(this, 50, 0));
+            this.update();
+        }
+        toggle() {
+            this.is_closed = !this.is_closed;
+            this.resistance = this.is_closed ? 0.01 : 9999999.0;
+        }
+        draw(ctx) {
+            ctx.fillStyle = "rgb(100, 100, 110)"; 
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 5).fill();
+            ctx.strokeStyle = this.is_closed ? COLORS.ACCENT : COLORS.DANGER; 
+            ctx.lineWidth = 6;
+            
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            ctx.beginPath();
+            if (this.rotation === 0) {
+                let end_y = this.is_closed ? cy : this.rect.y - 20;
+                ctx.moveTo(this.rect.x + 20, cy); 
+                ctx.lineTo(this.rect.x + this.rect.w - 20, end_y);
+            } else {
+                let end_x = this.is_closed ? cx : this.rect.x + this.rect.w + 20;
+                ctx.moveTo(cx, this.rect.y + 20); 
+                ctx.lineTo(end_x, this.rect.y + this.rect.h - 20);
+            }
+            ctx.stroke();
+            this.draw_base(ctx);
+        }
+    }
+
+    class Fuse extends Component {
+        constructor(x, y) {
+            super(x, y, 80, 30, "Fuse");
+            this.resistance = 0.1; 
+            this.max_current = 2.0;
+            this.nodes.push(new Node(this, -40, 0), new Node(this, 40, 0));
+            this.update();
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.is_burnt ? "rgb(50,50,50)" : "rgb(150,200,255)";
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 5).fill();
+            
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            if (!this.is_burnt) {
+                ctx.strokeStyle = COLORS.DANGER; 
+                ctx.lineWidth = 3; 
+                ctx.beginPath();
+                if (this.rotation === 0) {
+                    ctx.moveTo(this.rect.x + 10, cy); 
+                    ctx.lineTo(this.rect.x + this.rect.w - 10, cy);
+                } else {
+                    ctx.moveTo(cx, this.rect.y + 10); 
+                    ctx.lineTo(cx, this.rect.y + this.rect.h - 10);
+                }
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = COLORS.DANGER; 
+                ctx.font = "13px Consolas"; 
+                ctx.fillText("BLOWN", this.rect.x, this.rect.y - 5);
+            }
+            this.draw_base(ctx);
+        }
+    }
+
+    class Electromagnet extends Component {
+        constructor(x, y) {
+            super(x, y, 140, 50, "Magnet");
+            this.resistance = 5.0; 
+            this.max_power = 200.0; 
+            this.magnetic_field = 0.0; 
+            this.pulse = 0.0;
+            this.nodes.push(new Node(this, -70, 0), new Node(this, 70, 0));
+            this.update();
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.is_burnt ? "rgb(50,50,50)" : "rgb(100, 100, 110)";
+            ctx.roundRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h, 5).fill();
+            
+            let cx = this.rect.x + this.rect.w / 2;
+            let cy = this.rect.y + this.rect.h / 2;
+            
+            if (!this.is_burnt) {
+                ctx.strokeStyle = "rgb(180,110,50)"; 
+                ctx.lineWidth = 2;
+                for (let i = 0; i < 12; i++) {
+                    ctx.beginPath();
+                    if (this.rotation === 0) {
+                        ctx.ellipse(this.rect.x + 12 + i * 11, cy, 7.5, 20, 0, 0, Math.PI * 2);
+                    } else {
+                        ctx.ellipse(cx, this.rect.y + 12 + i * 11, 20, 7.5, 0, 0, Math.PI * 2);
+                    }
+                    ctx.stroke();
+                }
+                if (Math.abs(this.current) > 0.1) {
+                    this.pulse = (this.pulse + Math.abs(this.current)) % 50;
+                    ctx.strokeStyle = COLORS.MAGNETIC; 
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); 
+                    ctx.arc(cx, cy, 40 + this.pulse, 0, Math.PI * 2); 
+                    ctx.stroke();
+                    ctx.fillStyle = "rgb(100,255,100)"; 
+                    ctx.font = "13px Consolas";
+                    ctx.fillText(`B: ${(this.magnetic_field * 1000).toFixed(1)}mT`, this.rect.x, this.rect.y - 10);
+                }
+            }
+            this.draw_base(ctx);
+        }
+    }
+
+    // ==========================================
+    // 5. محرك الفيزياء الشامل (Gauss-Seidel)
+    // ==========================================
+    class TruePhysicsEngine {
+        static solve(components, wires, dt) {
+            let all_nodes = [];
+            
+            components.forEach(c => {
+                all_nodes.push(...c.nodes);
+                c.node_a.connections = []; 
+                c.node_b.connections = [];
+                c.node_a.is_fixed = false; 
+                c.node_b.is_fixed = false;
+            });
+
+            components.forEach(c => {
+                if (!c.is_burnt) {
+                    let r = c instanceof Capacitor ? (c.capacitance > 0 ? c.resistance + (dt / c.capacitance) : 999999) : c.resistance;
+                    c.node_a.connections.push({neighbor: c.node_b, res: r, comp: c});
+                    c.node_b.connections.push({neighbor: c.node_a, res: r, comp: c});
+                }
+            });
+
+            wires.forEach(w => {
+                w.node_a.connections.push({neighbor: w.node_b, res: w.resistance, comp: w});
+                w.node_b.connections.push({neighbor: w.node_a, res: w.resistance, comp: w});
+            });
+
+            let batteries = components.filter(c => c instanceof Battery);
+            if (batteries.length === 0) return ["No Power Source Detected."];
+
+            let main_bat = batteries[0];
+            main_bat.node_b.voltage = 0.0; 
+            main_bat.node_b.is_fixed = true;
+            main_bat.node_a.voltage = main_bat.voltage; 
+            main_bat.node_a.is_fixed = true;
+
+            let variable_nodes = all_nodes.filter(n => !n.is_fixed);
+            
+            for (let iter = 0; iter < 300; iter++) {
+                variable_nodes.forEach(node => {
+                    let sum_v_r = 0.0, sum_1_r = 0.0;
+                    node.connections.forEach(conn => {
+                        if (conn.res > 0) {
+                            if (conn.comp instanceof Capacitor) {
+                                let v_cap = conn.comp.capacitance > 0 ? conn.comp.charge / conn.comp.capacitance : 0;
+                                let sign = node === conn.comp.node_a ? 1 : -1;
+                                sum_v_r += (conn.neighbor.voltage - (sign * v_cap)) / conn.res;
+                            } else {
+                                sum_v_r += conn.neighbor.voltage / conn.res;
+                            }
+                            sum_1_r += 1.0 / conn.res;
+                        }
+                    });
+                    if (sum_1_r > 0) {
+                        node.voltage = sum_v_r / sum_1_r;
+                    }
+                });
+            }
+
+            let formulas = ["--- Circuit Topology Math ---"];
+            
+            components.forEach(c => {
+                if (c.is_burnt) { 
+                    c.current = c.voltage_drop = c.power = 0.0; 
+                    return; 
+                }
+                c.voltage_drop = Math.abs(c.node_a.voltage - c.node_b.voltage);
+                
+                if (c instanceof Capacitor) {
+                    let v_c = c.capacitance > 0 ? c.charge / c.capacitance : 0;
+                    c.current = c.resistance > 0 ? (c.node_a.voltage - c.node_b.voltage - v_c) / c.resistance : 0;
+                    c.charge += c.current * dt;
+                } else {
+                    c.current = c.resistance > 0 ? c.voltage_drop / c.resistance : 0;
+                }
+                c.power = c.voltage_drop * Math.abs(c.current);
+                c.temp_k = 298.15 + (c.power * 2.0);
+
+                if (c instanceof Electromagnet) {
+                    c.magnetic_field = (4 * Math.PI * 1e-7) * (200 / 0.1) * c.current;
+                }
+                
+                if (c.max_power && c.power > c.max_power) {
+                    c.is_burnt = true; 
+                    Logger.log(`${c.name} BURNT due to Overpower (${c.power.toFixed(1)}W)`, COLORS.DANGER);
+                }
+                
+                if (c instanceof Fuse && Math.abs(c.current) > c.max_current) {
+                    c.is_burnt = true; 
+                    c.resistance = 9999999.0; 
+                    Logger.log("FUSE BLOWN! Circuit Protected.", COLORS.WARNING);
+                }
+            });
+
+            wires.forEach(w => w.current = w.resistance > 0 ? (w.node_a.voltage - w.node_b.voltage) / w.resistance : 0);
+
+            let total_current = wires.reduce((sum, w) => sum + ((w.node_a === main_bat.node_a || w.node_b === main_bat.node_a) ? Math.abs(w.current) : 0), 0);
+            
+            if (total_current > 0.01) {
+                let req = main_bat.voltage / total_current;
+                formulas.push(
+                    `Network: Active Closed Loop`, 
+                    `Total I = ${total_current.toFixed(2)} A`, 
+                    `R_eq = V / I = ${req.toFixed(2)} Ω`
+                );
+            } else {
+                formulas.push("Network: Open / Blocked");
+            }
+            
+            return formulas;
+        }
+    }
+
+    // ==========================================
+    // 6. واجهة المستخدم الداخلية (UI)
+    // ==========================================
+    class UI {
+        constructor() {
+            this.tools = [
+                {name: "Battery", cls: Battery, c: "rgb(80,80,80)"},
+                {name: "Resistor", cls: Resistor, c: "rgb(210,180,140)"},
+                {name: "Bulb", cls: Bulb, c: "rgb(255,255,100)"},
+                {name: "Capacitor", cls: Capacitor, c: COLORS.CAPACITOR},
+                {name: "Switch", cls: Switch, c: "rgb(100,100,110)"},
+                {name: "Fuse", cls: Fuse, c: "rgb(150,200,255)"},
+                {name: "Magnet", cls: Electromagnet, c: "rgb(100,100,110)"}
+            ];
+            
+            this.panel_left_width = 120;
+            this.panel_right_width = 280;
+            this.console_height = 110;
+            
+            this.tool_rects = this.tools.map((t, i) => ({x: 10, y: 60 + i*75, w: 100, h: 45}));
+        }
+        
+        draw_grid(ctx) {
+            ctx.fillStyle = COLORS.GRID;
+            for (let x = this.panel_left_width; x < WIDTH - this.panel_right_width; x += GRID_SIZE) {
+                for (let y = 0; y < HEIGHT - this.console_height; y += GRID_SIZE) {
+                    ctx.beginPath(); 
+                    ctx.arc(x, y, 1, 0, Math.PI * 2); 
+                    ctx.fill();
+                }
+            }
+        }
+        
+        draw_toolbar(ctx) {
+            ctx.fillStyle = COLORS.PANEL; 
+            ctx.fillRect(0, 0, this.panel_left_width, HEIGHT);
+            ctx.strokeStyle = COLORS.WIRE; 
+            ctx.lineWidth = 2; 
+            ctx.beginPath(); 
+            ctx.moveTo(this.panel_left_width, 0); 
+            ctx.lineTo(this.panel_left_width, HEIGHT); 
+            ctx.stroke();
+            
+            ctx.fillStyle = COLORS.ACCENT; 
+            ctx.font = "bold 18px Tahoma"; 
+            ctx.fillText("PARTS", 30, 30);
+            
+            this.tools.forEach((t, i) => {
+                let r = this.tool_rects[i];
+                ctx.fillStyle = t.c; 
+                ctx.roundRect(r.x, r.y, r.w, r.h, 5).fill();
+                ctx.fillStyle = "rgb(20,20,20)"; 
+                ctx.font = "bold 14px Consolas"; 
+                ctx.fillText(t.name, r.x + 10, r.y + 27);
+            });
+        }
+        
+        get_tool(pos) {
+            for (let i = 0; i < this.tool_rects.length; i++) {
+                let r = this.tool_rects[i];
+                if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) {
+                    return this.tools[i].cls;
+                }
+            }
+            return null;
+        }
+        
+        draw_dashboard(ctx, comp, formulas) {
+            ctx.fillStyle = COLORS.PANEL; 
+            ctx.fillRect(WIDTH - this.panel_right_width, 0, this.panel_right_width, HEIGHT - this.console_height);
+            ctx.strokeStyle = COLORS.WIRE; 
+            ctx.lineWidth = 2; 
+            ctx.beginPath(); 
+            ctx.moveTo(WIDTH - this.panel_right_width, 0); 
+            ctx.lineTo(WIDTH - this.panel_right_width, HEIGHT - this.console_height); 
+            ctx.stroke();
+            
+            let y = 30; 
+            let px = WIDTH - this.panel_right_width + 15;
+            
+            ctx.fillStyle = COLORS.ACCENT; 
+            ctx.font = "bold 18px Tahoma"; 
+            ctx.fillText("CIRCUIT MATH", px, y); 
+            y += 35;
+            
+            ctx.fillStyle = COLORS.TEXT; 
+            ctx.font = "12px Consolas";
+            formulas.forEach(f => { 
+                ctx.fillText(f, px, y); 
+                y += 20; 
+            });
+            
+            ctx.strokeStyle = "rgb(100,100,100)"; 
+            ctx.lineWidth = 1; 
+            ctx.beginPath(); 
+            ctx.moveTo(px, y + 10); 
+            ctx.lineTo(WIDTH - 15, y + 10); 
+            ctx.stroke(); 
+            y += 40;
+            
+            if (comp) {
+                ctx.fillStyle = "rgb(255,200,100)"; 
+                ctx.font = "bold 18px Tahoma"; 
+                ctx.fillText(`DATA: ${comp.name}`, px, y);
+                
+                let val_str = comp instanceof Battery ? `EMF: ${comp.voltage.toFixed(1)} V` : 
+                             (comp instanceof Capacitor ? `Cap: ${comp.capacitance.toFixed(3)} F` : `Val: ${comp.resistance.toFixed(1)} Ω`);
+                
+                ctx.fillStyle = COLORS.ACCENT; 
+                ctx.font = "bold 14px Consolas"; 
+                ctx.fillText(val_str, px, y + 35);
+                
+                let chart_y = y + 80;
+                ctx.fillStyle = "rgb(40,40,40)"; 
+                ctx.fillRect(px, chart_y, 250, 100);
+                
+                let v_h = Math.min((comp.voltage_drop / 24) * 100, 100);
+                let i_h = Math.min((Math.abs(comp.current) / 5) * 100, 100);
+                
+                ctx.fillStyle = "rgb(100,150,255)"; 
+                ctx.fillRect(px + 20, chart_y + 100 - v_h, 35, v_h);
+                
+                ctx.fillStyle = "rgb(255,150,50)"; 
+                ctx.fillRect(px + 100, chart_y + 100 - i_h, 35, i_h);
+                
+                ctx.fillStyle = COLORS.TEXT; 
+                ctx.font = "12px Consolas";
+                ctx.fillText(`${comp.voltage_drop.toFixed(1)}V`, px + 20, chart_y + 115);
+                ctx.fillText(`${Math.abs(comp.current).toFixed(1)}A`, px + 100, chart_y + 115);
+
+                if (comp.is_burnt) { 
+                    ctx.fillStyle = COLORS.DANGER; 
+                    ctx.font = "bold 18px Tahoma"; 
+                    ctx.fillText("DESTROYED", px, chart_y + 140); 
+                }
+            } else {
+                ctx.fillStyle = "rgb(150,150,150)"; 
+                ctx.font = "bold 14px Consolas"; 
+                ctx.fillText("Select a component...", px, y + 40);
+            }
+        }
+        
+        draw_console(ctx) {
+            ctx.fillStyle = "rgb(20,20,20)"; 
+            ctx.fillRect(this.panel_left_width, HEIGHT - this.console_height, WIDTH - this.panel_left_width, this.console_height);
+            ctx.fillStyle = COLORS.ACCENT; 
+            ctx.font = "bold 14px Consolas"; 
+            ctx.fillText("> SYSTEM EVENT LOG: (Press 'R' to Rotate, Right-Click to Delete)", this.panel_left_width + 10, HEIGHT - this.console_height + 25);
+            
+            let now = Date.now();
+            [...Logger.logs].reverse().forEach((log, i) => {
+                if (now - log.time > 10000) return;
+                ctx.fillStyle = log.color; 
+                ctx.font = "12px Consolas";
+                let d = new Date(log.time);
+                ctx.fillText(`[${d.toTimeString().split(' ')[0]}] ${log.msg}`, this.panel_left_width + 10, HEIGHT - this.console_height + 50 + (i * 18));
+            });
+        }
+    }
+
+    // ==========================================
+    // 7. الحلقة الرئيسية والتحكم (Main & Input)
+    // ==========================================
+    let components = [];
+    let wires = [];
+    let ui = new UI();
+    let selected = null;
+    let drawing_node = null;
+    let mouse = {x: 0, y: 0};
+    let dt = 0.016;
+
+    // تحديث الأبعاد عند التغيير
+    window.addEventListener('resize', () => {
+        WIDTH = window.innerWidth;
+        HEIGHT = window.innerHeight;
+        canvas.width = WIDTH;
+        canvas.height = HEIGHT;
+    });
+
+    Logger.log("Circuit Builder 2D Booted. Waiting for components...", COLORS.ACCENT);
+
+    // ==========================================
+    // 8. استقبال الأوامر من الواجهة الرئيسية
+    // ==========================================
+    window.addEventListener('message', (e) => {
+        const data = e.data;
+        if (data.action === 'adjust_value' && selected) {
+            let comp = selected;
+            let c = data.amount; // القيمة المرسلة (1 أو -1)
+            
+            if (!comp.is_burnt && !(comp instanceof Switch || comp instanceof Fuse)) {
+                if (comp instanceof Battery) {
+                    comp.voltage = Math.max(1.0, comp.voltage + c);
+                } else if (comp instanceof Capacitor) {
+                    comp.capacitance = Math.max(0.001, comp.capacitance + (c * 0.005));
+                } else {
+                    comp.resistance = Math.max(1.0, comp.resistance + c);
+                }
+                Logger.log(`${comp.name} value adjusted via control panel.`, COLORS.ACCENT);
+            }
+        }
+    });
+
+    // Events
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    
+    canvas.addEventListener('mousemove', e => {
+        let rect = canvas.getBoundingClientRect();
+        mouse.x = e.clientX - rect.left; 
+        mouse.y = e.clientY - rect.top;
+        
+        components.forEach(c => {
+            if (c.is_dragging) {
+                c.rect.x = Math.max(ui.panel_left_width, Math.min(WIDTH - ui.panel_right_width - c.rect.w, mouse.x + c.offset_x));
+                c.rect.y = Math.max(0, Math.min(HEIGHT - ui.console_height - c.rect.h, mouse.y + c.offset_y));
+                c.update();
+            }
+        });
+    });
+    
+    canvas.addEventListener('mousedown', e => {
+        let rightClick = e.button === 2;
+        
+        if (rightClick) {
+            let wire_del = wires.find(w => w.check_click(mouse));
+            if (wire_del) { 
+                wires = wires.filter(w => w !== wire_del); 
+                Logger.log("Wire deleted.", COLORS.WARNING); 
+                return; 
+            }
+            
+            let comp_del = [...components].reverse().find(c => 
+                mouse.x > c.rect.x && mouse.x < c.rect.x + c.rect.w && 
+                mouse.y > c.rect.y && mouse.y < c.rect.y + c.rect.h
+            );
+            
+            if (comp_del) {
+                wires = wires.filter(w => !comp_del.nodes.includes(w.node_a) && !comp_del.nodes.includes(w.node_b));
+                components = components.filter(c => c !== comp_del);
+                if (selected === comp_del) selected = null;
+                Logger.log(`${comp_del.name} deleted.`, COLORS.WARNING);
+            }
+            return;
+        }
+
+        let ToolClass = ui.get_tool(mouse);
+        if (ToolClass) {
+            let comp = new ToolClass(mouse.x, mouse.y);
+            components.push(comp);
+            if (selected) selected.is_selected = false;
+            selected = comp; 
+            selected.is_selected = selected.is_dragging = true;
+            selected.offset_x = selected.rect.x - mouse.x; 
+            selected.offset_y = selected.rect.y - mouse.y;
+            Logger.log(`${selected.name} added to workspace.`);
+            return;
+        }
+
+        let node = null;
+        for (let c of components) {
+            for (let n of c.nodes) {
+                if (Math.hypot(n.x - mouse.x, n.y - mouse.y) < 12) {
+                    node = n;
+                }
+            }
+        }
+        
+        if (node) { 
+            drawing_node = node; 
+            node.is_selected = true; 
+            return; 
+        }
+
+        let comp = [...components].reverse().find(c => 
+            mouse.x > c.rect.x && mouse.x < c.rect.x + c.rect.w && 
+            mouse.y > c.rect.y && mouse.y < c.rect.y + c.rect.h
+        );
+        
+        if (comp) {
+            if (comp instanceof Switch) { 
+                comp.toggle(); 
+                Logger.log(`Switch ${comp.is_closed ? 'CLOSED' : 'OPENED'}.`); 
+                return; 
+            }
+            if (selected) selected.is_selected = false;
+            selected = comp; 
+            selected.is_selected = selected.is_dragging = true;
+            selected.offset_x = selected.rect.x - mouse.x; 
+            selected.offset_y = selected.rect.y - mouse.y;
+        } else if (mouse.x > ui.panel_left_width && mouse.x < WIDTH - ui.panel_right_width && mouse.y < HEIGHT - ui.console_height) {
+            if (selected) selected.is_selected = false;
+            selected = drawing_node = null;
+        }
+    });
+    
+    canvas.addEventListener('mouseup', e => {
+        if (e.button !== 0) return;
+        components.forEach(c => c.is_dragging = false);
+        
+        if (drawing_node) {
+            drawing_node.is_selected = false;
+            let target = null;
+            
+            for (let c of components) {
+                for (let n of c.nodes) {
+                    if (n !== drawing_node && Math.hypot(n.x - mouse.x, n.y - mouse.y) < 15) {
+                        target = n;
+                    }
+                }
+            }
+            
+            if (target) {
+                let exists = wires.find(w => 
+                    (w.node_a === drawing_node && w.node_b === target) || 
+                    (w.node_a === target && w.node_b === drawing_node)
+                );
+                if (!exists) { 
+                    wires.push(new Wire(drawing_node, target)); 
+                    Logger.log("Wire connected successfully."); 
+                }
+            }
+            drawing_node = null;
+        }
+    });
+    
+    window.addEventListener('keydown', e => {
+        if (e.key.toLowerCase() === 'r' && selected) {
+            selected.rotate();
+        }
+    });
+
+    function loop() {
+        ctx.fillStyle = COLORS.BG; 
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        
+        let formulas = TruePhysicsEngine.solve(components, wires, dt);
+        
+        ui.draw_grid(ctx); 
+        ui.draw_toolbar(ctx);
+        wires.forEach(w => w.draw(ctx));
+        
+        if (drawing_node) {
+            ctx.strokeStyle = COLORS.ELECTRON; 
+            ctx.lineWidth = 2; 
+            ctx.beginPath();
+            ctx.moveTo(drawing_node.x, drawing_node.y); 
+            ctx.lineTo(snap(mouse.x), snap(mouse.y)); 
+            ctx.stroke();
+        }
+        
+        components.forEach(c => c.draw(ctx));
+        ui.draw_dashboard(ctx, selected, formulas); 
+        ui.draw_console(ctx);
+        
+        requestAnimationFrame(loop);
+    }
+    
+    loop();
+</script>
+</body>
+</html>

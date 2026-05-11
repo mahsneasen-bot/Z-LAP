@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Z-LAB Physics Engine PRO</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #030305; /* لون خلفية عميق */
+            font-family: 'Courier New', Courier, monospace; 
+            color: #00ffcc;
+        }
+        canvas { 
+            display: block; 
+        }
+        
+        /* لوحة البيانات الحية (HUD) */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(10, 10, 15, 0.8);
+            border: 1px solid rgba(0, 255, 204, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+        .hud-title {
+            font-size: 12px;
+            letter-spacing: 3px;
+            color: #88909b;
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 5px;
+        }
+        .hud-line {
+            font-size: 16px;
+            margin: 8px 0;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            width: 170px;
+        }
+        .hud-val {
+            color: #fff;
+        }
+
+        /* رسالة النظام بالأسفل */
+        #status { 
+            position: absolute; 
+            bottom: 20px; 
+            right: 20px; 
+            color: #00ffcc; 
+            font-size: 12px; 
+            font-weight: bold; 
+            letter-spacing: 2px; 
+            background: rgba(0,255,204,0.1);
+            padding: 8px 15px;
+            border-radius: 5px;
+            border: 1px solid rgba(0,255,204,0.3);
+            z-index: 10; 
+            transition: opacity 0.3s; 
+        }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="hud-title">LIVE TELEMETRY</div>
+        <div class="hud-line">TIME (t): <span class="hud-val" id="hud-t">0.00 s</span></div>
+        <div class="hud-line">DIST (x): <span class="hud-val" id="hud-x">0.00 m</span></div>
+        <div class="hud-line">HGHT (y): <span class="hud-val" id="hud-y">0.00 m</span></div>
+    </div>
+
+    <div id="status">ENGINE STANDBY</div>
+    <canvas id="simCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        // ضبط أبعاد الشاشة
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            drawScene();
+        }
+        window.addEventListener('resize', resize);
+
+        // متغيرات الفيزياء الأساسية
+        let state = {
+            t: 0,           // الزمن الفعلي
+            v0: 15,         // السرعة الابتدائية
+            g: 9.81,        // الجاذبية
+            angle: 45,      // زاوية الإطلاق
+            mode: 'Projectile', // نوع الحركة
+            isRunning: false,
+            
+            // الإحداثيات بالمتر
+            startX: 0, startY: 0,
+            currentX: 0, currentY: 0,
+            
+            // إعدادات العرض (الزوم والتوسيط)
+            scale: 15,      // كل 1 متر = 15 بكسل
+            originPxX: 0,   // نقطة الأصل X بالبكسل
+            originPxY: 0,   // نقطة الأصل Y بالبكسل
+            
+            // لحفظ المسار (الخط المتقطع)
+            path: []        
+        };
+
+        let animationId;
+
+        // تهيئة المشهد والزوم التلقائي
+        function initScene() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // تحديد نقطة الصفر (يسار أسفل الشاشة)
+            state.originPxX = canvas.width * 0.1;
+            state.originPxY = canvas.height * 0.85;
+
+            // حساب الزوم التلقائي بناءً على السرعة والزاوية حتى ما تطلع الطوبة برا الشاشة
+            if(state.v0 > 0) {
+                let theta = state.angle * (Math.PI / 180);
+                
+                // حساب أقصى مسافة أفقية للزوم
+                let maxDistance = (state.v0 * state.v0 * Math.sin(2 * theta)) / state.g; 
+                // إذا كانت المسافة الأفقية صفر (مثل القذف العمودي)، نعتمد على أقصى ارتفاع
+                if (maxDistance < 5) maxDistance = (state.v0 * state.v0) / (2 * state.g) * 2; 
+                if (maxDistance < 10) maxDistance = 20; // حد أدنى للمسافة
+                
+                let requiredWidth = maxDistance * 1.3; // إضافة مساحة فارغة للجمالية
+                state.scale = (canvas.width * 0.8) / requiredWidth;
+                
+                // تحديد حد أدنى وأقصى للزوم
+                if(state.scale > 40) state.scale = 40;
+                if(state.scale < 3) state.scale = 3;
+            }
+        }
+
+        // رسم الشبكة البيانية (المربعات) والمحاور
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            
+            let gridSize = state.scale * 2; // كل مربع يمثل 2 متر
+            
+            // خطوط عمودية وأفقية
+            for(let i = 0; i < canvas.width; i += gridSize) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+            }
+            for(let i = 0; i < canvas.height; i += gridSize) {
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+            }
+
+            // رسم المحاور الرئيسية (X, Y)
+            ctx.strokeStyle = 'rgba(0, 255, 204, 0.5)';
+            ctx.lineWidth = 2;
+            
+            // محور X (الأرض)
+            ctx.beginPath(); 
+            ctx.moveTo(0, state.originPxY); 
+            ctx.lineTo(canvas.width, state.originPxY); 
+            ctx.stroke();
+            
+            // محور Y (الارتفاع)
+            ctx.beginPath(); 
+            ctx.moveTo(state.originPxX, 0); 
+            ctx.lineTo(state.originPxX, canvas.height); 
+            ctx.stroke();
+        }
+
+        // رسم المشهد كامل (الشبكة، المسار، الكرة، والبيانات)
+        function drawScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawGrid();
+
+            // رسم الخط البياني للمسار (Trajectory Graph)
+            if (state.path.length > 0) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#ffcc00';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]); // خط متقطع
+                
+                for(let i = 0; i < state.path.length; i++) {
+                    let px = state.originPxX + (state.path[i].x * state.scale);
+                    let py = state.originPxY - (state.path[i].y * state.scale);
+                    if(i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]); // إرجاع الخط العادي
+            }
+
+            // رسم الكرة
+            let bx = state.originPxX + (state.currentX * state.scale);
+            let by = state.originPxY - (state.currentY * state.scale);
+            
+            ctx.beginPath();
+            ctx.arc(bx, by, 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#00ffcc';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00ffcc';
+            ctx.fill();
+            ctx.shadowBlur = 0; // إطفاء الظل لباقي الرسم
+            
+            // تحديث الأرقام بالشاشة (HUD)
+            document.getElementById('hud-t').innerText = state.t.toFixed(2) + ' s';
+            document.getElementById('hud-x').innerText = state.currentX.toFixed(2) + ' m';
+            document.getElementById('hud-y').innerText = Math.max(0, state.currentY).toFixed(2) + ' m';
+        }
+
+        // محرك الفيزياء الدقيق (الرياضيات)
+        function physicsTick() {
+            if (!state.isRunning) return;
+
+            // زيادة الزمن (0.02 ثانية لكل إطار للحصول على محاكاة سلسة)
+            state.t += 0.02;
+
+            let x = state.startX;
+            let y = state.startY;
+
+            // تطبيق المعادلات الدقيقة حسب نوع الحركة
+            if (state.mode === 'mode_freefall' || state.mode === 'Free Fall') {
+                // السقوط الحر: y = y0 - 1/2 g t^2
+                y = state.startY - (0.5 * state.g * state.t * state.t);
+            } 
+            else if (state.mode === 'mode_vertical' || state.mode === 'Vertical Throw') {
+                // القذف العمودي: y = y0 + v0 t - 1/2 g t^2
+                y = state.startY + (state.v0 * state.t) - (0.5 * state.g * state.t * state.t);
+            } 
+            else { 
+                // المقذوفات بزاوية: Projectile
+                let theta = state.angle * (Math.PI / 180);
+                x = state.startX + (state.v0 * Math.cos(theta) * state.t);
+                y = state.startY + (state.v0 * Math.sin(theta) * state.t) - (0.5 * state.g * state.t * state.t);
+            }
+
+            state.currentX = x;
+            state.currentY = y;
+
+            // حفظ النقطة للرسم البياني
+            if (Math.random() > 0.3) {
+                state.path.push({x: x, y: y});
+            }
+
+            // فحص الاصطدام بالأرض (y <= 0)
+            if (state.currentY <= 0 && state.t > 0.1) {
+                state.currentY = 0;
+                state.isRunning = false;
+                
+                // حساب الزمن النهائي رياضياً لتصحيح الدقة 100%
+                let finalTime = 0;
+                if(state.mode === 'mode_freefall' || state.mode === 'Free Fall') {
+                    finalTime = Math.sqrt((2 * state.startY) / state.g);
+                } else if (state.mode === 'mode_vertical' || state.mode === 'Vertical Throw') {
+                    finalTime = (2 * state.v0) / state.g;
+                } else {
+                    finalTime = (2 * state.v0 * Math.sin(state.angle * Math.PI/180)) / state.g;
+                }
+                
+                state.t = finalTime;
+                
+                statusDiv.innerText = "SIMULATION COMPLETE";
+                statusDiv.style.color = "#ffcc00";
+                
+                // إبلاغ الواجهة الرئيسية بانتهاء المحاكاة
+                window.parent.postMessage('ENGINE_READY', '*');
+            }
+
+            drawScene();
+
+            if (state.isRunning) {
+                animationId = requestAnimationFrame(physicsTick);
+            } else {
+                drawScene(); // رسمة أخيرة لضمان وقوف الكرة على الأرض بشكل صحيح
+            }
+        }
+
+        // الاستماع للأوامر من الواجهة الرئيسية
+        window.addEventListener('message', (e) => {
+            const data = e.data;
+            
+            if (data.action === 'start_sim') {
+                cancelAnimationFrame(animationId);
+                
+                // استلام البيانات من الواجهة
+                state.g = parseFloat(data.g) || 9.81;
+                state.v0 = parseFloat(data.v0) || 15;
+                state.angle = parseFloat(data.angle) || 45; // استلام الزاوية
+                state.mode = data.mode;
+                
+                state.t = 0;
+                state.path = [];
+                state.isRunning = true;
+                
+                initScene();
+
+                // إعداد نقطة الانطلاق
+                if (state.mode === 'mode_freefall' || state.mode === 'Free Fall') {
+                    state.startX = 5; // يبعد 5 أمتار عن المحور الصادي
+                    state.startY = 40; // يسقط من ارتفاع 40 متر
+                } else if (state.mode === 'mode_vertical' || state.mode === 'Vertical Throw') {
+                    state.startX = 5;
+                    state.startY = 0; // ينطلق من الأرض
+                } else { 
+                    // Projectile
+                    state.startX = 0;
+                    state.startY = 0;
+                }
+
+                state.currentX = state.startX;
+                state.currentY = state.startY;
+
+                statusDiv.innerText = "CALCULATING TRAJECTORY...";
+                statusDiv.style.color = "#00ffcc";
+                
+                physicsTick();
+            } 
+            else if (typeof data.action === 'string' && data.action.includes('mode_')) {
+                // عند تغيير الوضع من القائمة الجانبية
+                cancelAnimationFrame(animationId);
+                state.isRunning = false;
+                state.path = [];
+                state.mode = data.action;
+                
+                statusDiv.innerText = `READY: ${data.action.replace('mode_', '').toUpperCase()}`;
+                statusDiv.style.color = "#88909b";
+                
+                initScene();
+                if (state.mode === 'mode_freefall') { state.currentX = 5; state.currentY = 40; }
+                else if (state.mode === 'mode_vertical') { state.currentX = 5; state.currentY = 0; }
+                else { state.currentX = 0; state.currentY = 0; }
+                
+                drawScene();
+            }
+        });
+
+        // تشغيل أولي عند تحميل المحرك
+        initScene();
+        drawScene();
+        window.parent.postMessage('ENGINE_READY', '*');
+    </script>
+</body>
+</html>

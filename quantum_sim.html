@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Z-LAB | Quantum Mechanics Core</title>
+    
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+    <script type="text/javascript" src="https://www.glowscript.org/package/glow.3.2.min.js"></script>
+    
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background-color: #000; 
+            overflow: hidden; 
+            color: #00ffcc; 
+            font-family: 'Segoe UI', sans-serif; 
+        }
+        #glowscript { 
+            width: 100vw; 
+            height: 100vh; 
+        }
+    </style>
+</head>
+<body>
+    <div id="glowscript" class="glowscript"></div>
+
+<script type="text/javascript">
+    window.__context = { glowscript_container: $("#glowscript") };
+
+    // ==========================================
+    // 1. الدوال الرياضية المساعدة (بديل مكتبة random)
+    // ==========================================
+    function randomUniform(min, max) { 
+        return min + Math.random() * (max - min); 
+    }
+
+    function randomChoice(arr) { 
+        return arr[Math.floor(Math.random() * arr.length)]; 
+    }
+
+    function randomGauss(mu, sigma) {
+        let u = 1 - Math.random(); 
+        let v = Math.random();
+        let z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        return z * sigma + mu;
+    }
+
+    function randomChoices(population, weights) {
+        let totalWeight = weights.reduce((a, b) => a + b, 0);
+        let randomNum = Math.random() * totalWeight; 
+        let weightSum = 0;
+        
+        for (let i = 0; i < population.length; i++) {
+            weightSum += weights[i];
+            if (randomNum <= weightSum) return population[i];
+        }
+        return population[0];
+    }
+
+    // دالة انتظار آمنة للجافاسكربت لمنع تجميد المتصفح
+    function delay(seconds) { 
+        return new Promise(resolve => setTimeout(resolve, seconds * 1000)); 
+    }
+
+    // ==========================================
+    // 2. المحرك الرئيسي (Main Async Function)
+    // ==========================================
+    async function main() {
+        // إرسال إشارة للواجهة الرئيسية أن المحرك جاهز
+        window.parent.postMessage('ENGINE_READY', '*');
+
+        // إعداد مشهد الـ 3D
+        let scene = canvas({ 
+            width: window.innerWidth, 
+            height: window.innerHeight, 
+            center: vec(0, 0, 0), 
+            background: color.black, 
+            userspin: true, 
+            userzoom: true 
+        });
+
+        // ==========================================
+        // 3. بناء البيئة (الجدران، الشاشة، الكاميرا)
+        // ==========================================
+        
+        // الجدران الأمامية التي تحتوي على الشقين
+        let left_wall = box({pos: vec(-4.5, 0, 0), size: vec(5, 12, 0.2), color: color.white});
+        let mid_wall = box({pos: vec(0, 0, 0), size: vec(2, 12, 0.2), color: color.white});
+        let right_wall = box({pos: vec(4.5, 0, 0), size: vec(5, 12, 0.2), color: color.white});
+        let walls = [left_wall, mid_wall, right_wall];
+        
+        // الشاشة الخلفية السوداء التي تصطدم بها الجسيمات
+        let screen_bg = box({pos: vec(0, 0, -12), size: vec(22, 12, 0.1), color: color.gray(0.1)});
+
+        // كاميرا المراقبة (Observer)
+        let cam_stand = cylinder({pos: vec(0, 8.5, 1.5), axis: vec(0, -1.5, 0), radius: 0.1, color: color.gray(0.5), visible: false});
+        let cam_body = box({pos: vec(0, 7, 1.5), size: vec(1.5, 1, 2), color: color.white, visible: false});
+        let cam_lens = cylinder({pos: vec(0, 7, 0.5), axis: vec(0, 0, -1), radius: 0.4, color: color.black, visible: false});
+        let cam_led = sphere({pos: vec(0.5, 7.5, 1.5), radius: 0.1, color: vec(0.3, 0, 0), visible: false});
+        let camera_parts = [cam_stand, cam_body, cam_lens, cam_led];
+
+        // متغيرات الحالة التي تتحكم بها الواجهة الرئيسية
+        let current_mode = "Photon Mode";
+        let is_camera_on = false;
+        
+        // مصفوفات لحفظ الآثار على الشاشة
+        let hits = [];
+        let pattern_lines = []; 
+        let water_color = vec(0.4, 0.7, 1.0);
+
+        function clear_screen() {
+            for (let h of hits) h.visible = false;
+            for (let l of pattern_lines) l.visible = false;
+            hits = []; 
+            pattern_lines = [];
+        }
+
+        // ==========================================
+        // 4. استقبال الأوامر من الواجهة الرئيسية
+        // ==========================================
+        window.addEventListener('message', (e) => {
+            const data = e.data;
+            
+            // تغيير وضع المحاكاة
+            if (data.action === 'q_mode') {
+                current_mode = data.mode;
+                clear_screen();
+            } 
+            // تشغيل/إطفاء الكاميرا
+            else if (data.action === 'q_cam') {
+                is_camera_on = data.state;
+                for (let c of camera_parts) c.visible = is_camera_on;
+                // مسح الشاشة إذا كنا في وضع الكم لتوضيح تأثير المراقب فوراً
+                if (current_mode === "Photon Mode") clear_screen();
+            }
+        });
+
+        let source_pos = vec(0, 0, 15);
+
+        // ==========================================
+        // 5. حلقة المحاكاة المستمرة (Render Loop)
+        // ==========================================
+        while (true) {
+            await rate(30);
+            
+            // وميض أحمر للكاميرا إذا كانت تعمل
+            if (is_camera_on) {
+                let timeNow = Date.now() / 1000;
+                cam_led.color = (Math.floor(timeNow * 8) % 2 === 0) ? color.red : vec(0.1, 0, 0);
+            } else {
+                cam_led.color = vec(0.1, 0, 0);
+            }
+
+            // ------------------------------------------
+            // وضع الجسيمات الكلاسيكية (Particle Mode)
+            // ------------------------------------------
+            if (current_mode === "Particle Mode") {
+                let p = sphere({pos: source_pos, radius: 0.2, color: color.orange});
+                
+                // الجسيمات تمر من أحد الشقين عشوائياً وتشكل خطين فقط
+                let target_x = randomChoice([-2.0, 2.0]) + randomGauss(0, 0.2);
+                
+                while (p.pos.z > -11.8) { 
+                    await rate(200); 
+                    p.pos.z -= 0.5; 
+                    if (p.pos.z < 0) p.pos.x += (target_x - p.pos.x) * 0.1; 
+                }
+                
+                hits.push(sphere({pos: vec(p.pos.x, p.pos.y, -11.9), radius: 0.15, color: color.orange}));
+                p.visible = false;
+            } 
+            
+            // ------------------------------------------
+            // وضع الموجات (Wave Mode)
+            // ------------------------------------------
+            else if (current_mode === "Wave Mode") {
+                let wave_front = [];
+                for (let y = -6; y <= 6; y += 3) {
+                    wave_front.push(ring({pos: source_pos.add(vec(0, y, 0)), axis: vec(0,0,1), radius: 0.1, thickness: 0.05, color: water_color}));
+                }
+                
+                // حركة الموجة نحو الجدار
+                while (wave_front[0].pos.z > 0) { 
+                    await rate(100); 
+                    for (let w of wave_front) { 
+                        w.pos.z -= 0.5; 
+                        w.radius += 0.4; 
+                    } 
+                }
+                
+                // تأثير الاصطدام بالجدار
+                for (let wall of walls) wall.color = water_color;
+                for (let w of wave_front) w.visible = false;
+                await delay(0.05); 
+                for (let wall of walls) wall.color = color.white;
+                
+                // توليد موجتين جديدتين من الشقين (التداخل)
+                let ripples = [];
+                for (let y = -4; y <= 4; y += 2) { 
+                    ripples.push(ring({pos: vec(-2, y, 0), axis: vec(0,0,1), radius: 0.1, thickness: 0.05, color: water_color})); 
+                    ripples.push(ring({pos: vec(2, y, 0), axis: vec(0,0,1), radius: 0.1, thickness: 0.05, color: water_color})); 
+                }
+                
+                // انتشار التداخل
+                for (let i = 0; i < 40; i++) { 
+                    await rate(100); 
+                    for (let rw of ripples) { 
+                        rw.radius += 0.3; 
+                        rw.opacity -= 0.025; 
+                    } 
+                }
+                
+                // رسم نمط التداخل النهائي على الشاشة (عدة خطوط)
+                let target_positions = [0, -3.5, 3.5, -7, 7];
+                for (let tx of target_positions) { 
+                    let l = box({pos: vec(tx, 0, -11.9), size: vec(1.2, 12, 0.01), color: water_color, opacity: 0.5, emissive: true}); 
+                    pattern_lines.push(l); 
+                }
+                
+                for (let rw of ripples) rw.visible = false;
+                await delay(1.5); 
+                clear_screen();
+            } 
+            
+            // ------------------------------------------
+            // وضع الكم / الفوتون (Photon Mode) - تأثير المُراقب
+            // ------------------------------------------
+            else if (current_mode === "Photon Mode") {
+                let photon = sphere({pos: source_pos, radius: 0.2, color: color.yellow});
+                
+                // حركة الفوتون نحو الجدار
+                while (photon.pos.z > 0) { 
+                    await rate(200); 
+                    photon.pos.z -= 0.5; 
+                    photon.pos.x += randomUniform(-0.15, 0.15); 
+                    photon.pos.y += randomUniform(-0.15, 0.15); 
+                }
+                
+                let target_x;
+                
+                // اللحظة الحاسمة: هل الكاميرا تعمل (يوجد مراقب) أم لا؟
+                if (is_camera_on) { 
+                    // إذا تمت المراقبة -> انهيار الدالة الموجية -> يتصرف كجسيم صلب (نمط خطين)
+                    target_x = randomChoice([-2.0, 2.0]) + randomGauss(0, 0.2); 
+                    photon.color = color.red; 
+                } else { 
+                    // إذا لم تتم المراقبة -> دالة موجية احتمالية -> يتصرف كموجة (نمط تداخل متعدد الخطوط)
+                    target_x = randomChoices([0, -3.5, 3.5, -7, 7], [0.4, 0.2, 0.2, 0.1, 0.1]) + randomGauss(0, 0.4); 
+                    photon.color = color.green; 
+                }
+                    
+                // استكمال الحركة نحو الشاشة الخلفية
+                while (photon.pos.z > -11.8) { 
+                    await rate(200); 
+                    photon.pos.z -= 0.5; 
+                    photon.pos.x += (target_x - photon.pos.x) * 0.1; 
+                }
+                
+                hits.push(sphere({pos: vec(photon.pos.x, photon.pos.y, -11.9), radius: 0.15, color: photon.color}));
+                photon.visible = false;
+            }
+        }
+    }
+
+    // تشغيل المحرك والتقاط أي أخطاء
+    main().catch(err => console.error("Quantum Core Error: ", err));
+</script>
+</body>
+</html>
