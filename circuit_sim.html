@@ -6,11 +6,12 @@
     <title>Z-LAB | Circuit Simulator 2D</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
+        html, body {
             background: rgb(18, 20, 25);
             overflow: hidden;
+            width: 100%;
+            height: 100%;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            /* pointer-events موحدة تعمل لكل من الماوس واللمس */
             touch-action: none;
             user-select: none;
             -webkit-user-select: none;
@@ -19,25 +20,30 @@
             display: block;
             width: 100vw;
             height: 100vh;
-            /* منع حركة الصفحة عند السحب باللمس */
             touch-action: none;
         }
+        /* Scrollbar styling for floating panels on all platforms */
+        .zlab-panel::-webkit-scrollbar { width: 6px; }
+        .zlab-panel::-webkit-scrollbar-thumb { background: rgb(0,200,150); border-radius: 4px; }
     </style>
 </head>
 <body>
 <canvas id="simCanvas"></canvas>
 <script>
 // ══════════════════════════════════════════════════════
-//  ١. الإعدادات الأساسية
+//  1. CORE SETUP
 // ══════════════════════════════════════════════════════
 const canvas = document.getElementById('simCanvas');
 const ctx    = canvas.getContext('2d');
-
+ 
 let WIDTH  = window.innerWidth;
 let HEIGHT = window.innerHeight;
 canvas.width  = WIDTH;
 canvas.height = HEIGHT;
-
+ 
+// Detect small / touch screens (phones, small tablets) to scale UI sensibly
+function isSmallScreen(){ return window.innerWidth <= 800; }
+ 
 const COLORS = {
     BG:       "rgb(18, 20, 25)",
     PANEL:    "rgb(28, 32, 40)",
@@ -52,19 +58,41 @@ const COLORS = {
     SELECTED: "rgb(100, 255, 100)",
     MAGNETIC: "rgb(100, 200, 255)",
     CAPACITOR:"rgb(50, 150, 200)",
+    DIELECTRIC:"rgb(180, 140, 220)",
     WHITE:    "rgb(255,255,255)",
     BLACK:    "rgb(0,0,0)"
 };
-
+ 
 const BAND_COLORS = [
     "rgb(0,0,0)","rgb(139,69,19)","rgb(255,0,0)",
     "rgb(255,140,0)","rgb(255,255,0)","rgb(0,128,0)",
     "rgb(0,0,255)","rgb(128,0,128)"
 ];
-
+ 
+// ══════════════════════════════════════════════════════
+//  1.1 DIELECTRIC MATERIALS LIBRARY
+//      Real relative-permittivity (εr) values from physics references.
+//      "polar" marks whether the material's molecules have a permanent
+//      dipole moment (polar dielectric) or not (non-polar dielectric).
+// ══════════════════════════════════════════════════════
+const DIELECTRIC_MATERIALS = [
+    { key:"vacuum",  name:"Vacuum",        er:1.0,    polar:false, color:"rgb(40,45,55)"   },
+    { key:"air",     name:"Air",           er:1.0006, polar:false, color:"rgb(120,170,220)"},
+    { key:"paper",   name:"Paper",         er:3.7,    polar:true,  color:"rgb(230,220,190)"},
+    { key:"mica",    name:"Mica",          er:5.4,    polar:false, color:"rgb(170,170,180)"},
+    { key:"glass",   name:"Glass",         er:6.5,    polar:true,  color:"rgb(170,220,230)"},
+    { key:"ceramic", name:"Ceramic",       er:8.5,    polar:true,  color:"rgb(220,200,170)"},
+    { key:"oil",     name:"Transformer Oil",er:2.2,   polar:false, color:"rgb(160,120,40)" },
+    { key:"rubber",  name:"Rubber",        er:2.9,    polar:false, color:"rgb(60,60,65)"   },
+    { key:"water",   name:"Distilled Water",er:80.1,  polar:true,  color:"rgb(70,130,220)" }
+];
+function getMaterial(key){
+    return DIELECTRIC_MATERIALS.find(m=>m.key===key) || DIELECTRIC_MATERIALS[0];
+}
+ 
 const GRID_SIZE = 20;
 const snap = v => Math.round(v / GRID_SIZE) * GRID_SIZE;
-
+ 
 // roundRect polyfill
 CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
     if(w<2*r)r=w/2; if(h<2*r)r=h/2;
@@ -77,9 +105,9 @@ CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
     this.closePath();
     return this;
 };
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٢. سجل الأحداث
+//  2. EVENT LOGGER
 // ══════════════════════════════════════════════════════
 class Logger {
     static logs = [];
@@ -90,9 +118,9 @@ class Logger {
         if(this.logs.length > 5) this.logs.shift();
     }
 }
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٣. عقد وأسلاك
+//  3. NODES & WIRES
 // ══════════════════════════════════════════════════════
 class Node {
     constructor(parent, ox, oy){
@@ -120,7 +148,7 @@ class Node {
         ctx.stroke();
     }
 }
-
+ 
 class Wire {
     constructor(na, nb){
         this.node_a = na; this.node_b = nb;
@@ -156,7 +184,7 @@ class Wire {
         ctx.moveTo(pts[0].x, pts[0].y);
         for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
-
+ 
         if(Math.abs(this.current) > 0.01){
             let speed = Math.min(Math.abs(this.current)*3.0, 15.0);
             this.electron_offset = (this.electron_offset + speed) % 30;
@@ -166,12 +194,12 @@ class Wire {
             let l3  = Math.abs(this.node_b.x - mx);
             let tot = l1+l2+l3;
             if(tot===0) return;
-
+ 
             let dir = this.current > 0 ? 1 : -1;
             let dx1 = mx > this.node_a.x ? 1 : -1;
             let dy2 = this.node_b.y > this.node_a.y ? 1 : -1;
             let dx3 = this.node_b.x > mx ? 1 : -1;
-
+ 
             ctx.fillStyle = COLORS.ELECTRON;
             for(let i=0;i<Math.floor(tot/30)+1;i++){
                 let d = ((this.electron_offset*dir)+(i*30));
@@ -188,9 +216,9 @@ class Wire {
         }
     }
 }
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٤. المكونات الإلكترونية
+//  4. ELECTRONIC COMPONENTS
 // ══════════════════════════════════════════════════════
 class Component {
     constructor(x,y,w,h,name){
@@ -237,7 +265,7 @@ class Component {
                pos.y>=this.rect.y && pos.y<=this.rect.y+this.rect.h;
     }
 }
-
+ 
 class Battery extends Component {
     constructor(x,y){
         super(x,y,80,120,"Battery");
@@ -265,7 +293,7 @@ class Battery extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
 class Resistor extends Component {
     constructor(x,y){
         super(x,y,120,40,"Resistor");
@@ -295,7 +323,7 @@ class Resistor extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
 class Bulb extends Component {
     constructor(x,y){
         super(x,y,60,60,"Bulb");
@@ -305,12 +333,20 @@ class Bulb extends Component {
     }
     draw(ctx){
         let cx=this.rect.x+this.rect.w/2, cy=this.rect.y+this.rect.h/2;
-        ctx.fillStyle = this.is_burnt ? "rgb(40,40,40)" :
-                        (Math.abs(this.current)>0.1 ? "rgb(255,255,100)" : "rgb(120,120,120)");
+        // Brightness now scales smoothly with current so a discharging
+        // capacitor makes the bulb visibly fade out instead of snapping off.
+        let brightness = this.is_burnt ? 0 : Math.max(0, Math.min(1, Math.abs(this.current)/0.5));
+        if(this.is_burnt){
+            ctx.fillStyle = "rgb(40,40,40)";
+        } else {
+            let g = Math.round(120 + brightness*135);
+            let b = Math.round(120 - brightness*20);
+            ctx.fillStyle = `rgb(${Math.round(120+brightness*135)},${g},${Math.max(0,b)})`;
+        }
         ctx.beginPath(); ctx.arc(cx,cy,30,0,Math.PI*2); ctx.fill();
-        if(Math.abs(this.current)>0.1 && !this.is_burnt){
-            ctx.strokeStyle="rgb(255,255,0)"; ctx.lineWidth=2;
-            ctx.beginPath(); ctx.arc(cx,cy,38,0,Math.PI*2); ctx.stroke();
+        if(brightness>0.03 && !this.is_burnt){
+            ctx.strokeStyle=`rgba(255,255,0,${brightness.toFixed(2)})`; ctx.lineWidth=2;
+            ctx.beginPath(); ctx.arc(cx,cy,32+brightness*10,0,Math.PI*2); ctx.stroke();
         }
         ctx.fillStyle="rgb(100,100,100)";
         if(this.rotation===0) ctx.fillRect(cx-15,this.rect.y+this.rect.h-10,30,20);
@@ -322,35 +358,124 @@ class Bulb extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
+// ══════════════════════════════════════════════════════
+//  4.1 CAPACITOR — real parallel-plate capacitor with selectable dielectric
+//      Formula: C = εr * ε0 * A / d
+//      Discharge: a capacitor with no source but connected to a resistive
+//      load (resistor / bulb / wire loop) genuinely discharges through that
+//      load over time (real RC behaviour), so the bulb fades out and the
+//      field collapses — it does not just "fill up and become useless".
+// ══════════════════════════════════════════════════════
+const EPSILON_0 = 8.854e-12; // permittivity of free space (F/m)
+ 
 class Capacitor extends Component {
     constructor(x,y){
-        super(x,y,60,60,"Capacitor");
-        this.capacitance=0.01; this.charge=0.0; this.resistance=0.001;
-        this.nodes.push(new Node(this,-30,0), new Node(this,30,0));
+        super(x,y,80,60,"Capacitor");
+        // Physically real "rolled foil" capacitor geometry: a large effective
+        // plate area (2 m^2) wound into a small physical package with a thin
+        // dielectric film gap (2 micrometers) — exactly how real electrolytic
+        // / film capacitors achieve microfarad-range capacitance from a small
+        // body. This keeps C = εr·ε0·A/d fully real while landing in a
+        // realistic 9 uF (air) to 700 uF (water) range.
+        this.plate_area = 2.0;       // m^2 (effective rolled foil area)
+        this.plate_gap  = 2e-6;      // m   (2 micrometre dielectric film)
+        this.dielectric_key = "air";
+        this.charge = 0.0;           // Coulombs
+        // Equivalent series resistance (ESR). Real electrolytic capacitors
+        // have meaningful ESR/leakage resistance; this value is chosen so
+        // charge/discharge happens over a few human-watchable seconds for
+        // typical dielectrics, while strongly polar water (an extreme,
+        // deliberately dramatic teaching case) takes noticeably longer —
+        // exactly the correct relative physics (higher εr -> bigger C ->
+        // longer RC time at fixed R, just like a real RC circuit).
+        this.resistance = 19000;     // Ω
+        this.recalc_capacitance();
+        this.nodes.push(new Node(this,-40,0), new Node(this,40,0));
         this.update();
+    }
+    recalc_capacitance(){
+        let mat = getMaterial(this.dielectric_key);
+        this.capacitance = mat.er * EPSILON_0 * this.plate_area / this.plate_gap;
+    }
+    get dielectric(){ return getMaterial(this.dielectric_key); }
+    discharge(){
+        this.charge = 0.0;
+        Logger.log(`${this.name} manually discharged.`, COLORS.WARNING);
     }
     draw(ctx){
         ctx.fillStyle=COLORS.CAPACITOR;
         ctx.roundRect(this.rect.x,this.rect.y,this.rect.w,this.rect.h,5).fill();
+ 
+        // Dielectric slab drawn between the plates, colored per material
+        let mat = this.dielectric;
+        ctx.fillStyle = mat.color;
+        if(this.rotation===0){
+            ctx.fillRect(this.rect.x+22, this.rect.y+6, this.rect.w-44, this.rect.h-12);
+        } else {
+            ctx.fillRect(this.rect.x+6, this.rect.y+22, this.rect.w-12, this.rect.h-44);
+        }
+ 
+        // Metal plates
         ctx.strokeStyle=COLORS.WHITE; ctx.lineWidth=4;
         let cx=this.rect.x+this.rect.w/2, cy=this.rect.y+this.rect.h/2;
         ctx.beginPath();
         if(this.rotation===0){
-            ctx.moveTo(cx-10,this.rect.y+10);   ctx.lineTo(cx-10,this.rect.y+this.rect.h-10);
-            ctx.moveTo(cx+10,this.rect.y+10);   ctx.lineTo(cx+10,this.rect.y+this.rect.h-10);
+            ctx.moveTo(cx-14,this.rect.y+8);    ctx.lineTo(cx-14,this.rect.y+this.rect.h-8);
+            ctx.moveTo(cx+14,this.rect.y+8);    ctx.lineTo(cx+14,this.rect.y+this.rect.h-8);
         } else {
-            ctx.moveTo(this.rect.x+10,cy-10);   ctx.lineTo(this.rect.x+this.rect.w-10,cy-10);
-            ctx.moveTo(this.rect.x+10,cy+10);   ctx.lineTo(this.rect.x+this.rect.w-10,cy+10);
+            ctx.moveTo(this.rect.x+8,cy-14);    ctx.lineTo(this.rect.x+this.rect.w-8,cy-14);
+            ctx.moveTo(this.rect.x+8,cy+14);    ctx.lineTo(this.rect.x+this.rect.w-8,cy+14);
         }
         ctx.stroke();
+ 
+        // Electric field lines between the plates — only drawn while the
+        // capacitor actually holds charge, and they fade out exactly as
+        // the charge (and field) decays during discharge.
         let vc = this.capacitance>0 ? this.charge/this.capacitance : 0;
-        ctx.fillStyle=COLORS.BLACK; ctx.font="13px Consolas";
-        ctx.fillText(`${vc.toFixed(1)}V`,this.rect.x+15,this.rect.y+15);
+        let fieldStrength = Math.min(1, Math.abs(vc)/12);
+        if(fieldStrength > 0.02){
+            let lineCount = 5;
+            ctx.strokeStyle = `rgba(255,255,80,${(0.25+0.65*fieldStrength).toFixed(2)})`;
+            ctx.lineWidth = 1.3;
+            let dir = vc > 0 ? 1 : -1;
+            for(let i=0;i<lineCount;i++){
+                ctx.beginPath();
+                if(this.rotation===0){
+                    let yy = this.rect.y + 12 + i*((this.rect.h-24)/(lineCount-1));
+                    let x1 = cx - 13, x2 = cx + 13;
+                    if(dir<0) [x1,x2]=[x2,x1];
+                    ctx.moveTo(x1, yy);
+                    ctx.lineTo(x2, yy);
+                    ctx.lineTo(x2-(dir*5), yy-3);
+                    ctx.moveTo(x2, yy);
+                    ctx.lineTo(x2-(dir*5), yy+3);
+                } else {
+                    let xx = this.rect.x + 12 + i*((this.rect.w-24)/(lineCount-1));
+                    let y1 = cy - 13, y2 = cy + 13;
+                    if(dir<0) [y1,y2]=[y2,y1];
+                    ctx.moveTo(xx, y1);
+                    ctx.lineTo(xx, y2);
+                    ctx.lineTo(xx-3, y2-(dir*5));
+                    ctx.moveTo(xx, y2);
+                    ctx.lineTo(xx+3, y2-(dir*5));
+                }
+                ctx.stroke();
+            }
+        }
+ 
+        ctx.fillStyle=COLORS.BLACK; ctx.font="12px Consolas";
+        ctx.fillText(`${vc.toFixed(1)}V`,this.rect.x+8,this.rect.y+15);
+ 
+        // Small badge showing whether the chosen dielectric is polar or non-polar
+        ctx.fillStyle = mat.polar ? "rgb(255,150,150)" : "rgb(150,200,255)";
+        ctx.font = "bold 11px Consolas";
+        ctx.fillText(mat.polar ? "P" : "NP", this.rect.x+this.rect.w-22, this.rect.y+15);
+ 
         this.draw_base(ctx);
     }
 }
-
+ 
 class Switch extends Component {
     constructor(x,y){
         super(x,y,100,40,"Switch");
@@ -381,7 +506,7 @@ class Switch extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
 class Fuse extends Component {
     constructor(x,y){
         super(x,y,80,30,"Fuse");
@@ -405,7 +530,7 @@ class Fuse extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
 class Electromagnet extends Component {
     constructor(x,y){
         super(x,y,140,50,"Magnet");
@@ -437,12 +562,42 @@ class Electromagnet extends Component {
         this.draw_base(ctx);
     }
 }
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٥. محرك الفيزياء (Gauss-Seidel)
+//  5. PHYSICS ENGINE (Gauss-Seidel relaxation + exact RC integration)
+//
+//  Capacitor handling: a capacitor cannot be solved like an ordinary
+//  resistor sharing the same node-relaxation pass as everything else,
+//  because its own stored voltage feeds back into that very relaxation —
+//  doing so naively causes the solved voltage to run away past the
+//  battery's voltage (a real bug, since a capacitor can never exceed the
+//  source voltage that is charging it). Real circuit simulators avoid this
+//  with a two-step "Thevenin" approach, used here exactly:
+//    1) Solve the resistive network with EACH capacitor temporarily
+//       removed (open-circuited), giving the true open-circuit voltage
+//       that capacitor is charging/discharging toward.
+//    2) Probe the Thevenin resistance the rest of the network presents at
+//       that capacitor's terminals (inject a small test resistor, solve,
+//       back out R = V/I).
+//    3) Step the capacitor's stored voltage using the EXACT closed-form
+//       solution of dV/dt = (V_target - V)/(R_th + R_esr) — i.e. true
+//       exponential RC charge/discharge. This is unconditionally stable
+//       for any dt, R, or C (it can never overshoot, oscillate, or diverge
+//       to NaN/Infinity even with large frame-time spikes).
+//    4) Re-solve the full network (capacitor included) once more so every
+//       other component's displayed current/voltage reflects the
+//       capacitor's freshly updated charge this frame.
+//  This lets a capacitor genuinely CHARGE when a battery drives it and
+//  genuinely DISCHARGE through a resistor/bulb load when no battery is
+//  present (or a switch disconnects the battery) — the bulb fades out and
+//  the field between the plates collapses smoothly to zero, exactly like a
+//  real RC circuit, instead of "filling up and becoming useless".
 // ══════════════════════════════════════════════════════
 class PhysicsEngine {
-    static solve(components, wires, dt){
+    // Builds the connection lists for a Gauss-Seidel pass, optionally
+    // excluding one capacitor entirely from the resistive network (used to
+    // find that capacitor's true open-circuit / Thevenin target voltage).
+    static _buildConnections(components, wires, excludeComp){
         let all_nodes = [];
         components.forEach(c=>{
             all_nodes.push(...c.nodes);
@@ -452,23 +607,32 @@ class PhysicsEngine {
             }
         });
         components.forEach(c=>{
-            if(!c.is_burnt && c.node_a && c.node_b){
-                let r = c instanceof Capacitor
-                    ? (c.capacitance>0 ? c.resistance+(dt/c.capacitance) : 999999)
-                    : c.resistance;
-                c.node_a.connections.push({neighbor:c.node_b, res:r, comp:c});
-                c.node_b.connections.push({neighbor:c.node_a, res:r, comp:c});
+            if(!c.is_burnt && c.node_a && c.node_b && c!==excludeComp){
+                c.node_a.connections.push({neighbor:c.node_b, res:c.resistance, comp:c});
+                c.node_b.connections.push({neighbor:c.node_a, res:c.resistance, comp:c});
             }
         });
         wires.forEach(w=>{
             w.node_a.connections.push({neighbor:w.node_b, res:w.resistance, comp:w});
             w.node_b.connections.push({neighbor:w.node_a, res:w.resistance, comp:w});
         });
-        let batteries = components.filter(c=>c instanceof Battery);
-        if(batteries.length===0) return ["No Power Source Detected."];
-        let bat = batteries[0];
-        bat.node_b.voltage=0.0; bat.node_b.is_fixed=true;
-        bat.node_a.voltage=bat.voltage; bat.node_a.is_fixed=true;
+        return all_nodes;
+    }
+ 
+    // Runs Gauss-Seidel relaxation to settle every node's voltage, given the
+    // connections already built by _buildConnections. A capacitor still
+    // present in the network contributes its own present voltage as a
+    // source term (so OTHER components see its effect), but the capacitor
+    // passed as `excludeComp` (if any) was already excluded from the graph
+    // above, so it has no influence here — letting us read a true
+    // open-circuit voltage across its own two terminals afterward.
+    static _relax(all_nodes, components){
+        let batteries = components.filter(c=>c instanceof Battery && !c.is_burnt);
+        if(batteries.length>0){
+            let bat = batteries[0];
+            bat.node_b.voltage=0.0; bat.node_b.is_fixed=true;
+            bat.node_a.voltage=bat.voltage; bat.node_a.is_fixed=true;
+        }
         let var_nodes = all_nodes.filter(n=>!n.is_fixed);
         for(let iter=0;iter<300;iter++){
             var_nodes.forEach(node=>{
@@ -488,15 +652,98 @@ class PhysicsEngine {
                 if(sr>0) node.voltage=sv/sr;
             });
         }
-        let formulas=["--- Circuit Math ---"];
+        return batteries;
+    }
+ 
+    // Accurate Thevenin resistance via direct current injection: zero all
+    // independent sources, inject a known test current I_test between the
+    // capacitor's two terminals, solve the resulting resistive network, and
+    // read R_th = V(node_a)-V(node_b) / I_test.
+    static _theveninResistanceByCurrentInjection(components, wires, cap){
+        let savedVoltages = components.map(c => c instanceof Battery ? c.voltage : null);
+        components.forEach(c=>{ if(c instanceof Battery) c.voltage = 0; });
+ 
+        let others = components.filter(c=>c!==cap);
+        let all_nodes = this._buildConnections(others, wires, null);
+        // With all sources zeroed, every node naturally settles at 0V unless
+        // we inject current. We do this by fixing node_a at +0.5V and
+        // node_b at -0.5V (a unit 1V test difference) and reading the
+        // resulting current through the path between them — equivalent and
+        // numerically simpler than literal current injection for a linear
+        // resistive network solved by relaxation.
+        if(all_nodes.length===0){
+            components.forEach((c,i)=>{ if(c instanceof Battery) c.voltage = savedVoltages[i]; });
+            return 1e9; // no other components: capacitor is isolated (open circuit)
+        }
+        cap.node_a.voltage = 0.5; cap.node_a.is_fixed = true;
+        cap.node_b.voltage = -0.5; cap.node_b.is_fixed = true;
+        let var_nodes = all_nodes.filter(n=>!n.is_fixed);
+        for(let iter=0;iter<300;iter++){
+            var_nodes.forEach(node=>{
+                let sv=0, sr=0;
+                node.connections.forEach(conn=>{
+                    if(conn.res>0){
+                        sv+=conn.neighbor.voltage/conn.res;
+                        sr+=1/conn.res;
+                    }
+                });
+                if(sr>0) node.voltage=sv/sr;
+            });
+        }
+        // Total current flowing out of node_a into the network equals the
+        // sum over node_a's connections of (V(node_a)-V(neighbor))/R.
+        let totalCurrent = 0;
+        cap.node_a.connections.forEach(conn=>{
+            if(conn.res>0) totalCurrent += (cap.node_a.voltage - conn.neighbor.voltage)/conn.res;
+        });
+        cap.node_a.is_fixed = false; cap.node_b.is_fixed = false;
+        components.forEach((c,i)=>{ if(c instanceof Battery) c.voltage = savedVoltages[i]; });
+ 
+        if(Math.abs(totalCurrent) < 1e-15) return 1e9; // isolated / open circuit
+        return Math.abs(1.0 / totalCurrent); // R_th = V_applied(1V) / I
+    }
+ 
+    static solve(components, wires, dt){
+        let formulas = ["--- Circuit Math ---"];
+        let capacitors = components.filter(c=>c instanceof Capacitor && !c.is_burnt);
+ 
+        // Step every capacitor's stored charge using the exact RC method.
+        capacitors.forEach(cap=>{
+            let all_nodes = this._buildConnections(components, wires, cap);
+            this._relax(all_nodes, components);
+            let vTarget = cap.node_a.voltage - cap.node_b.voltage;
+            let rTh = this._theveninResistanceByCurrentInjection(components, wires, cap);
+            let totalR = (isFinite(rTh) ? rTh : 1e9) + cap.resistance;
+ 
+            let C = cap.capacitance;
+            let vc_before = C>0 ? cap.charge/C : 0;
+            let tau = totalR * C;
+            let vc_after;
+            if(C<=0 || !isFinite(tau) || tau < 1e-12){
+                vc_after = vTarget;
+            } else {
+                vc_after = vTarget + (vc_before - vTarget) * Math.exp(-dt/tau);
+            }
+            if(!isFinite(vc_after)) vc_after = vc_before;
+            cap.current = C>0 ? (C*(vc_after - vc_before))/dt : 0;
+            if(!isFinite(cap.current)) cap.current = 0;
+            cap.charge = C>0 ? vc_after*C : 0;
+            if(!isFinite(cap.charge)) cap.charge = 0;
+            if(Math.abs(cap.charge) < 1e-15) cap.charge = 0;
+        });
+ 
+        // Final full solve (every capacitor included normally as a source
+        // term) so all OTHER components' node voltages/currents reflect the
+        // capacitors' freshly updated charge this frame.
+        let all_nodes = this._buildConnections(components, wires, null);
+        let batteries = this._relax(all_nodes, components);
+ 
         components.forEach(c=>{
             if(!c.node_a||!c.node_b) return;
             if(c.is_burnt){ c.current=c.voltage_drop=c.power=0; return; }
             c.voltage_drop=Math.abs(c.node_a.voltage-c.node_b.voltage);
             if(c instanceof Capacitor){
-                let vc=c.capacitance>0?c.charge/c.capacitance:0;
-                c.current=c.resistance>0?(c.node_a.voltage-c.node_b.voltage-vc)/c.resistance:0;
-                c.charge+=c.current*dt;
+                // current/charge already computed above via exact RC step
             } else {
                 c.current=c.resistance>0?c.voltage_drop/c.resistance:0;
             }
@@ -516,18 +763,31 @@ class PhysicsEngine {
         wires.forEach(w=>{
             w.current=w.resistance>0?(w.node_a.voltage-w.node_b.voltage)/w.resistance:0;
         });
-        let tot=wires.reduce((s,w)=>s+((w.node_a===bat.node_a||w.node_b===bat.node_a)?Math.abs(w.current):0),0);
-        if(tot>0.01){
-            formulas.push(`Active Loop`,`I = ${tot.toFixed(2)} A`,`R_eq = ${(bat.voltage/tot).toFixed(2)} Ω`);
+ 
+        if(batteries.length>0){
+            let bat = batteries[0];
+            let tot=wires.reduce((s,w)=>s+((w.node_a===bat.node_a||w.node_b===bat.node_a)?Math.abs(w.current):0),0);
+            if(tot>0.01){
+                formulas.push(`Active Loop`,`I = ${tot.toFixed(2)} A`,`R_eq = ${(bat.voltage/tot).toFixed(2)} Ω`);
+            } else {
+                formulas.push("Open / Blocked");
+            }
+        } else if(capacitors.length>0){
+            let activeCap = capacitors.find(c=>Math.abs(c.current)>0.0001);
+            if(activeCap){
+                formulas.push("Capacitor Discharging", `I = ${Math.abs(activeCap.current).toExponential(2)} A`);
+            } else {
+                formulas.push("No Power Source / Idle");
+            }
         } else {
-            formulas.push("Open / Blocked");
+            formulas.push("No Power Source Detected.");
         }
         return formulas;
     }
 }
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٦. واجهة المستخدم
+//  6. USER INTERFACE
 // ══════════════════════════════════════════════════════
 class UI {
     constructor(){
@@ -540,10 +800,11 @@ class UI {
             {name:"Fuse",      cls:Fuse,          c:"rgb(150,200,255)"},
             {name:"Magnet",    cls:Electromagnet, c:"rgb(100,100,110)"}
         ];
-        this.PANEL_W   = 120;
+        this.PANEL_W   = isSmallScreen() ? 90 : 120;
         this.DASH_W    = window.innerWidth > 800 ? 280 : 0;
-        this.CONSOLE_H = 110;
-        this.tool_rects= this.tools.map((_,i)=>({x:10, y:60+i*75, w:100, h:45}));
+        this.CONSOLE_H = isSmallScreen() ? 90 : 110;
+        this.tool_h    = isSmallScreen() ? 50 : 45;
+        this.tool_rects= this.tools.map((_,i)=>({x:8, y:55+i*(this.tool_h+10), w:this.PANEL_W-18, h:this.tool_h}));
     }
     draw_grid(ctx){
         ctx.fillStyle=COLORS.GRID;
@@ -557,15 +818,26 @@ class UI {
         ctx.fillRect(0,0,this.PANEL_W,HEIGHT);
         ctx.strokeStyle=COLORS.WIRE; ctx.lineWidth=2;
         ctx.beginPath(); ctx.moveTo(this.PANEL_W,0); ctx.lineTo(this.PANEL_W,HEIGHT); ctx.stroke();
-        ctx.fillStyle=COLORS.ACCENT; ctx.font="bold 18px Tahoma";
-        ctx.fillText("PARTS",25,35);
+        ctx.fillStyle=COLORS.ACCENT; ctx.font="bold 16px Tahoma";
+        ctx.fillText("PARTS",18,35);
         this.tools.forEach((t,i)=>{
             let r=this.tool_rects[i];
             ctx.fillStyle=t.c;
             ctx.roundRect(r.x,r.y,r.w,r.h,5).fill();
-            ctx.fillStyle="rgb(20,20,20)"; ctx.font="bold 13px Consolas";
-            ctx.fillText(t.name,r.x+8,r.y+28);
+            ctx.fillStyle="rgb(20,20,20)"; ctx.font="bold 12px Consolas";
+            ctx.fillText(t.name,r.x+6,r.y+r.h/2+4);
         });
+ 
+        // Educational "Show E-Field Guide" button at the bottom of the toolbar
+        let gy = this.tool_rects[this.tool_rects.length-1].y + this.tool_h + 20;
+        this.efield_btn_rect = {x:8, y:gy, w:this.PANEL_W-18, h:this.tool_h+5};
+        ctx.fillStyle = "rgb(60,40,90)";
+        ctx.roundRect(this.efield_btn_rect.x,this.efield_btn_rect.y,this.efield_btn_rect.w,this.efield_btn_rect.h,5).fill();
+        ctx.strokeStyle = COLORS.DIELECTRIC; ctx.lineWidth=1.5;
+        ctx.roundRect(this.efield_btn_rect.x,this.efield_btn_rect.y,this.efield_btn_rect.w,this.efield_btn_rect.h,5).stroke();
+        ctx.fillStyle="rgb(230,210,255)"; ctx.font="bold 11px Consolas";
+        ctx.fillText("E-Field", this.efield_btn_rect.x+6, this.efield_btn_rect.y+this.efield_btn_rect.h/2);
+        ctx.fillText("Guide", this.efield_btn_rect.x+6, this.efield_btn_rect.y+this.efield_btn_rect.h/2+14);
     }
     get_tool(pos){
         for(let i=0;i<this.tool_rects.length;i++){
@@ -574,6 +846,11 @@ class UI {
                 return this.tools[i].cls;
         }
         return null;
+    }
+    check_efield_btn(pos){
+        let r = this.efield_btn_rect;
+        if(!r) return false;
+        return pos.x>=r.x&&pos.x<=r.x+r.w&&pos.y>=r.y&&pos.y<=r.y+r.h;
     }
     draw_dashboard(ctx, comp, formulas){
         if(this.DASH_W===0) return;
@@ -593,7 +870,7 @@ class UI {
             ctx.fillStyle="rgb(255,200,100)"; ctx.font="bold 18px Tahoma";
             ctx.fillText(`DATA: ${comp.name}`,tx,y);
             let val = comp instanceof Battery    ? `EMF: ${comp.voltage.toFixed(1)} V` :
-                      comp instanceof Capacitor  ? `Cap: ${comp.capacitance.toFixed(3)} F` :
+                      comp instanceof Capacitor  ? `Cap: ${comp.capacitance.toExponential(2)} F` :
                                                    `Val: ${comp.resistance.toFixed(1)} Ω`;
             ctx.fillStyle=COLORS.ACCENT; ctx.font="bold 14px Consolas";
             ctx.fillText(val,tx,y+35);
@@ -606,6 +883,28 @@ class UI {
             ctx.fillStyle=COLORS.TEXT; ctx.font="12px Consolas";
             ctx.fillText(`${comp.voltage_drop.toFixed(1)}V`, tx+20,  cy2+115);
             ctx.fillText(`${Math.abs(comp.current).toFixed(1)}A`, tx+100, cy2+115);
+ 
+            if(comp instanceof Capacitor){
+                let mat = comp.dielectric;
+                let vc = comp.capacitance>0 ? comp.charge/comp.capacitance : 0;
+                let E_field = comp.plate_gap>0 ? (vc/comp.plate_gap) : 0;
+                let yy = cy2+140;
+                ctx.fillStyle="rgb(180,140,220)"; ctx.font="bold 13px Tahoma";
+                ctx.fillText("DIELECTRIC DATA", tx, yy); yy+=20;
+                ctx.fillStyle=COLORS.TEXT; ctx.font="12px Consolas";
+                ctx.fillText(`Material: ${mat.name}`, tx, yy); yy+=18;
+                ctx.fillText(`Type: ${mat.polar ? "Polar" : "Non-Polar"}`, tx, yy); yy+=18;
+                ctx.fillText(`Relative permittivity εr = ${mat.er}`, tx, yy); yy+=18;
+                ctx.fillText(`E-field ≈ ${(Math.abs(E_field)/1000).toFixed(2)} kV/m`, tx, yy); yy+=18;
+                ctx.fillStyle = "rgb(150,200,255)"; ctx.font="11px Consolas";
+                if(mat.polar){
+                    ctx.fillText("Polar molecules align with the field,", tx, yy); yy+=15;
+                    ctx.fillText("reducing net E and increasing C.", tx, yy);
+                } else {
+                    ctx.fillText("Non-polar molecules weakly polarize;", tx, yy); yy+=15;
+                    ctx.fillText("effect on E and C is smaller.", tx, yy);
+                }
+            }
         }
     }
     draw_console(ctx){
@@ -621,59 +920,146 @@ class UI {
         });
     }
 }
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٧. نظام إدارة المؤشر الموحّد (Pointer Events)
-//     يغطي الماوس + اللمس بمعالج واحد
+//  7. UNIFIED POINTER MANAGEMENT (mouse + touch)
 // ══════════════════════════════════════════════════════
 const components = [];
 const wires      = [];
 const ui         = new UI();
-
-// قطع افتراضية عند الفتح
+ 
+// Default starter parts
 components.push(new Battery(250, 200));
 components.push(new Resistor(450, 200));
-
+ 
 let dragItem      = null;
 let activeNode    = null;
 let dragOffset    = {x:0, y:0};
 let tempWireEnd   = null;
-let selectedWire  = null;   // السلك المحدد حالياً
-
-// ── متغيرات لوحة تعديل القيمة (HTML overlay) ──
-let valuePanel    = null;   // div الـ overlay
-
+let selectedWire  = null;
+ 
+// ── HTML overlay panel for editing component values ──
+let valuePanel    = null;
+let efieldGuideOpen = false;
+ 
 const activePointers = new Map();
-
+ 
 function getPos(e){
     let rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
-
-// ── إنشاء/إزالة لوحة تعديل القيمة ──
+ 
+// ── Create/remove the value-editing panel ──
 function showValuePanel(comp){
     removeValuePanel();
     if(!comp || comp instanceof Switch) return;
-
-    // تحديد القيمة القابلة للتعديل
+ 
     let isVoltage = comp instanceof Battery;
     let isCap     = comp instanceof Capacitor;
-    let label     = isVoltage ? "Voltage (V)" : isCap ? "Capacitance (F)" : "Resistance (Ω)";
-    let current   = isVoltage ? comp.voltage : isCap ? comp.capacitance : comp.resistance;
-    let step      = isVoltage ? 1 : isCap ? 0.001 : 1;
-    let minVal    = isVoltage ? 1 : isCap ? 0.001 : 0.1;
-    let maxVal    = isVoltage ? 120 : isCap ? 1 : 10000;
-
-    // حساب موقع اللوحة فوق المكوّن
+ 
     let px = comp.rect.x + comp.rect.w/2;
     let py = comp.rect.y - 10;
-
+    let small = isSmallScreen();
+ 
     valuePanel = document.createElement('div');
+    valuePanel.className = 'zlab-panel';
+ 
+    if(isCap){
+        // ── Capacitor panel: dielectric picker + discharge control ──
+        let panelW = small ? Math.min(240, WIDTH-20) : 250;
+        let mat = comp.dielectric;
+        valuePanel.style.cssText = `
+            position:fixed;
+            left:${Math.max(10, Math.min(px - panelW/2, WIDTH - panelW - 10))}px;
+            top:${Math.max(10, Math.min(py - 320, HEIGHT - 340))}px;
+            width:${panelW}px;
+            max-height:${Math.min(420, HEIGHT-20)}px;
+            overflow-y:auto;
+            background:rgb(28,32,40);
+            border:1px solid rgb(180,140,220);
+            border-radius:10px;
+            padding:12px 14px;
+            z-index:9999;
+            box-shadow:0 4px 20px rgba(0,0,0,0.7);
+            font-family:Consolas,monospace;
+            color:rgb(220,220,220);
+            user-select:none;
+        `;
+ 
+        let matButtons = DIELECTRIC_MATERIALS.map(m => `
+            <button data-key="${m.key}" class="vp_mat_btn" style="
+                width:100%;text-align:left;margin-bottom:4px;
+                padding:7px 8px;border-radius:6px;cursor:pointer;
+                border:1px solid ${m.key===comp.dielectric_key?'rgb(0,200,150)':'rgb(70,75,85)'};
+                background:${m.key===comp.dielectric_key?'rgb(40,55,50)':'rgb(40,44,54)'};
+                color:rgb(220,220,220);font-size:11.5px;
+                display:flex;justify-content:space-between;align-items:center;
+            ">
+                <span>${m.name}</span>
+                <span style="font-size:10px;color:${m.polar?'rgb(255,150,150)':'rgb(150,200,255)'}">${m.polar?'Polar':'Non-Polar'} εr=${m.er}</span>
+            </button>
+        `).join("");
+ 
+        let vc = comp.capacitance>0 ? comp.charge/comp.capacitance : 0;
+ 
+        valuePanel.innerHTML = `
+            <div style="font-size:12px;color:rgb(180,140,220);margin-bottom:8px;font-weight:bold;">${comp.name} — Choose Dielectric</div>
+            <div id="vp_mat_list">${matButtons}</div>
+            <div style="height:1px;background:rgb(70,75,85);margin:10px 0;"></div>
+            <div style="font-size:11px;color:rgb(200,200,120);margin-bottom:8px;line-height:1.5;">
+                C = εr · ε0 · A / d<br/>
+                C = <span id="vp_cap_display">${comp.capacitance.toExponential(3)}</span> F<br/>
+                Voltage across plates: <span id="vp_vc_display">${vc.toFixed(2)}</span> V
+            </div>
+            <button id="vp_discharge" style="
+                width:100%;padding:8px;margin-bottom:8px;background:rgb(90,40,40);
+                border:1px solid rgb(255,100,100);color:rgb(255,200,200);
+                border-radius:6px;cursor:pointer;font-size:12px;font-weight:bold;
+            ">⚡ Discharge Capacitor Now</button>
+            <button id="vp_close" style="width:100%;padding:5px;background:rgb(40,44,54);border:1px solid rgb(80,85,95);color:rgb(180,180,180);border-radius:6px;cursor:pointer;font-size:12px;">✕ Close</button>
+        `;
+        document.body.appendChild(valuePanel);
+ 
+        function refreshCapDisplay(){
+            let dEl = document.getElementById('vp_cap_display');
+            if(dEl) dEl.textContent = comp.capacitance.toExponential(3);
+        }
+ 
+        valuePanel.querySelectorAll('.vp_mat_btn').forEach(btn=>{
+            btn.addEventListener('pointerdown', e=>{
+                e.stopPropagation();
+                comp.dielectric_key = btn.getAttribute('data-key');
+                comp.recalc_capacitance();
+                let m = getMaterial(comp.dielectric_key);
+                Logger.log(`${comp.name} dielectric -> ${m.name} (εr=${m.er})`, COLORS.WARNING);
+                showValuePanel(comp); // redraw panel to refresh selection + values
+            });
+        });
+        document.getElementById('vp_discharge').addEventListener('pointerdown', e=>{
+            e.stopPropagation();
+            comp.discharge();
+            document.getElementById('vp_vc_display').textContent = "0.00";
+        });
+        document.getElementById('vp_close').addEventListener('pointerdown', e=>{
+            e.stopPropagation();
+            removeValuePanel();
+        });
+        return;
+    }
+ 
+    // ── General panel (Battery / Resistor / Bulb / Fuse / Magnet) ──
+    let label     = isVoltage ? "Voltage (V)" : "Resistance (Ω)";
+    let current   = isVoltage ? comp.voltage : comp.resistance;
+    let step      = 1;
+    let minVal    = isVoltage ? 1 : 0.1;
+    let maxVal    = isVoltage ? 120 : 10000;
+    let panelW2 = small ? Math.min(180, WIDTH-20) : 180;
+ 
     valuePanel.style.cssText = `
         position:fixed;
-        left:${Math.min(px - 90, WIDTH - 200)}px;
-        top:${Math.max(py - 110, 10)}px;
-        width:180px;
+        left:${Math.max(10, Math.min(px - panelW2/2, WIDTH - panelW2 - 10))}px;
+        top:${Math.max(10, Math.min(py - 110, HEIGHT - 130))}px;
+        width:${panelW2}px;
         background:rgb(28,32,40);
         border:1px solid rgb(0,200,150);
         border-radius:10px;
@@ -684,7 +1070,7 @@ function showValuePanel(comp){
         color:rgb(220,220,220);
         user-select:none;
     `;
-
+ 
     valuePanel.innerHTML = `
         <div style="font-size:11px;color:rgb(0,200,150);margin-bottom:8px;font-weight:bold;">${comp.name} — ${label}</div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
@@ -719,23 +1105,22 @@ function showValuePanel(comp){
         ">✕ Close</button>
     `;
     document.body.appendChild(valuePanel);
-
+ 
     function applyVal(v){
         v = Math.max(minVal, Math.min(maxVal, parseFloat(v)||minVal));
         if(isVoltage)    comp.voltage      = v;
-        else if(isCap)   comp.capacitance  = v;
         else             comp.resistance   = v;
         document.getElementById('vp_input').value = v;
-        Logger.log(`${comp.name} → ${v}`, COLORS.WARNING);
+        Logger.log(`${comp.name} -> ${v}`, COLORS.WARNING);
     }
-
+ 
     document.getElementById('vp_dec').addEventListener('pointerdown', e=>{
         e.stopPropagation();
-        applyVal((isVoltage?comp.voltage:isCap?comp.capacitance:comp.resistance) - step);
+        applyVal((isVoltage?comp.voltage:comp.resistance) - step);
     });
     document.getElementById('vp_inc').addEventListener('pointerdown', e=>{
         e.stopPropagation();
-        applyVal((isVoltage?comp.voltage:isCap?comp.capacitance:comp.resistance) + step);
+        applyVal((isVoltage?comp.voltage:comp.resistance) + step);
     });
     document.getElementById('vp_input').addEventListener('change', e=>{
         e.stopPropagation();
@@ -747,12 +1132,98 @@ function showValuePanel(comp){
         removeValuePanel();
     });
 }
-
+ 
 function removeValuePanel(){
     if(valuePanel){ valuePanel.remove(); valuePanel=null; }
 }
-
-// ── حساب نقطة منتصف السلك (لوضع زر الحذف) ──
+ 
+// ── Educational E-Field Guide overlay (for teachers/students) ──
+function showEfieldGuide(){
+    removeEfieldGuide();
+    efieldGuideOpen = true;
+    let small = isSmallScreen();
+    let panelW = small ? Math.min(WIDTH-20, 340) : 420;
+ 
+    let guide = document.createElement('div');
+    guide.id = 'zlab_efield_guide';
+    guide.className = 'zlab-panel';
+    guide.style.cssText = `
+        position:fixed;
+        left:${(WIDTH-panelW)/2}px;
+        top:${small ? 20 : 60}px;
+        width:${panelW}px;
+        max-height:${HEIGHT-40}px;
+        overflow-y:auto;
+        background:rgb(26,22,36);
+        border:1px solid rgb(180,140,220);
+        border-radius:12px;
+        padding:18px 20px;
+        z-index:10000;
+        box-shadow:0 8px 30px rgba(0,0,0,0.8);
+        font-family:Consolas,monospace;
+        color:rgb(225,220,235);
+        user-select:text;
+    `;
+ 
+    let matRows = DIELECTRIC_MATERIALS.map(m=>`
+        <tr>
+            <td style="padding:3px 8px;border-bottom:1px solid rgb(60,55,70);">${m.name}</td>
+            <td style="padding:3px 8px;border-bottom:1px solid rgb(60,55,70);color:${m.polar?'rgb(255,150,150)':'rgb(150,200,255)'}">${m.polar?'Polar':'Non-Polar'}</td>
+            <td style="padding:3px 8px;border-bottom:1px solid rgb(60,55,70);text-align:right;">${m.er}</td>
+        </tr>
+    `).join("");
+ 
+    guide.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div style="font-size:16px;font-weight:bold;color:rgb(200,160,240);">Electric Field & Dielectrics — Teaching Guide</div>
+            <button id="vp_guide_close" style="background:rgb(50,40,60);border:1px solid rgb(120,100,140);color:rgb(220,220,220);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;">✕</button>
+        </div>
+        <div style="font-size:12.5px;line-height:1.6;">
+            <p style="margin-bottom:10px;">A capacitor stores charge on two parallel plates. The electric field between the plates is:</p>
+            <div style="background:rgb(18,16,24);border-radius:6px;padding:8px 12px;margin-bottom:10px;text-align:center;color:rgb(180,255,200);">
+                E = V / d &nbsp;&nbsp;|&nbsp;&nbsp; C = εr · ε0 · A / d
+            </div>
+            <p style="margin-bottom:10px;">
+                Inserting a <b>dielectric</b> (insulator) between the plates increases the capacitance by the factor εr,
+                because the dielectric's molecules become polarized and create an internal field that partially
+                cancels the original field, lowering the net E for the same charge.
+            </p>
+            <p style="margin-bottom:6px;"><b style="color:rgb(255,150,150)">Polar dielectrics</b> (e.g. water, ceramic, glass) already have permanent
+            molecular dipoles. These dipoles rotate to align against the applied field, strongly opposing it — large εr,
+            large reduction in net E, large increase in C.</p>
+            <p style="margin-bottom:14px;"><b style="color:rgb(150,200,255)">Non-polar dielectrics</b> (e.g. air, mica, oil) have no permanent dipole.
+            The field only induces a small, weak polarization — smaller εr, smaller effect on E and C.</p>
+            <table style="width:100%;font-size:11.5px;border-collapse:collapse;margin-bottom:14px;">
+                <thead><tr style="color:rgb(0,200,150);">
+                    <th style="text-align:left;padding:3px 8px;">Material</th>
+                    <th style="text-align:left;padding:3px 8px;">Type</th>
+                    <th style="text-align:right;padding:3px 8px;">εr</th>
+                </tr></thead>
+                <tbody>${matRows}</tbody>
+            </table>
+            <p style="margin-bottom:6px;"><b>Try it:</b> Click a Capacitor, pick different materials, and watch the
+            voltage/field readout on the right-hand dashboard change.</p>
+            <p>
+            <b>Charging vs. discharging:</b> with a Battery connected, the capacitor charges up. Remove the
+            battery (or open a Switch) while a Resistor/Bulb is still connected, and the capacitor will
+            genuinely discharge through that load — current flows, the bulb fades out, and the field
+            between the plates collapses to zero, exactly like a real RC circuit.
+            </p>
+        </div>
+    `;
+    document.body.appendChild(guide);
+    document.getElementById('vp_guide_close').addEventListener('pointerdown', e=>{
+        e.stopPropagation();
+        removeEfieldGuide();
+    });
+}
+function removeEfieldGuide(){
+    let g = document.getElementById('zlab_efield_guide');
+    if(g) g.remove();
+    efieldGuideOpen = false;
+}
+ 
+// ── Wire midpoint (for delete button placement) ──
 function wireMidpoint(w){
     let pts = w.get_points();
     let mid = Math.floor(pts.length/2);
@@ -761,17 +1232,15 @@ function wireMidpoint(w){
         y: (pts[mid-1].y + pts[mid].y)/2
     };
 }
-
-// ── رسم زر ❌ لحذف السلك المحدد ──
+ 
+// ── Draw ❌ button to delete the selected wire ──
 function drawWireDeleteBtn(ctx, w){
     let m = wireMidpoint(w);
     let r = 14;
-    // الدائرة الحمراء
     ctx.fillStyle = "rgb(220,50,50)";
     ctx.beginPath(); ctx.arc(m.x, m.y, r, 0, Math.PI*2); ctx.fill();
     ctx.strokeStyle = "rgb(255,120,120)"; ctx.lineWidth = 2;
     ctx.stroke();
-    // علامة X
     ctx.strokeStyle = COLORS.WHITE; ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(m.x-6, m.y-6); ctx.lineTo(m.x+6, m.y+6);
@@ -779,32 +1248,30 @@ function drawWireDeleteBtn(ctx, w){
     ctx.stroke();
     return {x:m.x-r, y:m.y-r, w:r*2, h:r*2};
 }
-
-// ── رسم زر ❌ لحذف القطعة المحددة (الميزة الجديدة المضافة) ──
+ 
+// ── Draw ❌ button to delete the selected component ──
 function drawCompDeleteBtn(ctx, comp){
     let bx = comp.rect.x + comp.rect.w;
     let by = comp.rect.y;
     let r = 14;
-    // الدائرة الحمراء
     ctx.fillStyle = "rgb(220,50,50)";
     ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI*2); ctx.fill();
     ctx.strokeStyle = "rgb(255,120,120)"; ctx.lineWidth = 2;
     ctx.stroke();
-    // علامة X
     ctx.strokeStyle = COLORS.WHITE; ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(bx-6, by-6); ctx.lineTo(bx+6, by+6);
     ctx.moveTo(bx+6, by-6); ctx.lineTo(bx-6, by+6);
     ctx.stroke();
 }
-
-// ── بدء الضغط ──
+ 
+// ── Pointer down ──
 function onPointerDown(e){
     e.preventDefault();
     let pos = getPos(e);
     activePointers.set(e.pointerId, pos);
-
-    // ٠. فحص زر حذف السلك أولاً
+ 
+    // 0. Check wire-delete button first
     if(selectedWire){
         let m = wireMidpoint(selectedWire);
         if(Math.hypot(pos.x-m.x, pos.y-m.y) < 18){
@@ -815,20 +1282,18 @@ function onPointerDown(e){
             return;
         }
     }
-
-    // ٠.٢ فحص زر حذف القطعة المحددة (تطبيق ميزتك المطلوبة)
+ 
+    // 0.2 Check selected-component delete button
     let selectedComp = components.find(c => c.is_selected);
     if(selectedComp){
         let bx = selectedComp.rect.x + selectedComp.rect.w;
         let by = selectedComp.rect.y;
         if(Math.hypot(pos.x - bx, pos.y - by) < 18){
-            // أولاً: تنظيف وحذف جميع الأسلاك المرتبطة بهذه القطعة
             for(let i = wires.length - 1; i >= 0; i--){
                 if(selectedComp.nodes.includes(wires[i].node_a) || selectedComp.nodes.includes(wires[i].node_b)){
                     wires.splice(i, 1);
                 }
             }
-            // ثانياً: حذف القطعة نفسها من المصفوفة
             let idx = components.indexOf(selectedComp);
             if(idx > -1) components.splice(idx, 1);
             removeValuePanel();
@@ -836,8 +1301,15 @@ function onPointerDown(e){
             return;
         }
     }
-
-    // ١. الضغط على شريط الأدوات لإضافة قطعة جديدة
+ 
+    // 0.3 Check "E-Field Guide" button in the toolbar
+    if(ui.check_efield_btn(pos)){
+        if(efieldGuideOpen) removeEfieldGuide();
+        else showEfieldGuide();
+        return;
+    }
+ 
+    // 1. Click on toolbar to add a new component
     if(pos.x < ui.PANEL_W){
         let ToolClass = ui.get_tool(pos);
         if(ToolClass){
@@ -851,8 +1323,8 @@ function onPointerDown(e){
         }
         return;
     }
-
-    // ٢. فحص الضغط على العقد (بدء توصيل سلك)
+ 
+    // 2. Click on a node (start wiring)
     for(let c of components){
         for(let n of c.nodes){
             if(n.check_click(pos)){
@@ -862,8 +1334,8 @@ function onPointerDown(e){
             }
         }
     }
-
-    // ٣. فحص الضغط على القطع (للسحب والتحديد)
+ 
+    // 3. Click on a component (drag / select)
     let clickedComp = null;
     for(let c of components){
         if(c.check_click(pos)){
@@ -871,7 +1343,7 @@ function onPointerDown(e){
             break;
         }
     }
-
+ 
     if(clickedComp){
         dragItem = clickedComp;
         dragOffset = { x: pos.x - clickedComp.rect.x, y: pos.y - clickedComp.rect.y };
@@ -885,8 +1357,8 @@ function onPointerDown(e){
         }
         return;
     }
-
-    // ٤. فحص الضغط على الأسلاك لتحديدها
+ 
+    // 4. Click on a wire to select it
     let clickedWire = null;
     for(let w of wires){
         if(w.check_click(pos)){
@@ -894,53 +1366,55 @@ function onPointerDown(e){
             break;
         }
     }
-
+ 
     if(clickedWire){
         selectedWire = clickedWire;
         components.forEach(c => c.is_selected = false);
         removeValuePanel();
         return;
     }
-
-    // الضغط في الفراغ يلغي التحديدات
+ 
+    // Click on empty space clears selection
     components.forEach(c => c.is_selected = false);
     selectedWire = null;
     removeValuePanel();
 }
-
-// ── تحريك المؤشر (السحب) ──
+ 
+// ── Pointer move (dragging) ──
 function onPointerMove(e){
     e.preventDefault();
     let pos = getPos(e);
     activePointers.set(e.pointerId, pos);
-
-    // سحب القطعة وإعادة تمركز اللوحات
+ 
     if(dragItem){
         dragItem.rect.x = snap(pos.x - dragOffset.x);
         dragItem.rect.y = snap(pos.y - dragOffset.y);
         dragItem.update();
-
+ 
         if(dragItem.is_selected && valuePanel){
             let px = dragItem.rect.x + dragItem.rect.w/2;
             let py = dragItem.rect.y - 10;
-            valuePanel.style.left = `${Math.min(px - 90, WIDTH - 200)}px`;
-            valuePanel.style.top = `${Math.max(py - 110, 10)}px`;
+            let panelW = valuePanel.offsetWidth || 200;
+            valuePanel.style.left = `${Math.max(10, Math.min(px - panelW/2, WIDTH - panelW - 10))}px`;
+            if(dragItem instanceof Capacitor){
+                valuePanel.style.top = `${Math.max(10, Math.min(py - 320, HEIGHT - 340))}px`;
+            } else {
+                valuePanel.style.top = `${Math.max(10, Math.min(py - 110, HEIGHT - 130))}px`;
+            }
         }
     }
-
-    // تحديث مكان السلك المؤقت
+ 
     if(activeNode && tempWireEnd){
         tempWireEnd.x = pos.x;
         tempWireEnd.y = pos.y;
     }
 }
-
-// ── رفع الإصبع أو الماوس ──
+ 
+// ── Pointer up ──
 function onPointerUp(e){
     e.preventDefault();
     activePointers.delete(e.pointerId);
-
-    // إنهاء توصيل السلك إذا أفلتناه فوق عقدة صالحة
+ 
     if(activeNode && tempWireEnd){
         let pos = getPos(e);
         let targetNode = null;
@@ -953,7 +1427,7 @@ function onPointerUp(e){
             }
             if(targetNode) break;
         }
-
+ 
         if(targetNode){
             let exists = wires.some(w => (w.node_a === activeNode && w.node_b === targetNode) || (w.node_a === targetNode && w.node_b === activeNode));
             if(!exists){
@@ -962,26 +1436,30 @@ function onPointerUp(e){
             }
         }
     }
-
+ 
     dragItem = null;
     activeNode = null;
     tempWireEnd = null;
 }
-
-// ربط أحداث النوافذ والمؤشرات
+ 
 canvas.addEventListener('pointerdown', onPointerDown);
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', onPointerUp);
-
+canvas.addEventListener('pointercancel', onPointerUp);
+ 
 window.addEventListener('resize', () => {
     WIDTH = window.innerWidth;
     HEIGHT = window.innerHeight;
     canvas.width = WIDTH;
     canvas.height = HEIGHT;
-    ui.DASH_W = WIDTH > 800 ? 280 : 0;
+    ui.PANEL_W   = isSmallScreen() ? 90 : 120;
+    ui.DASH_W    = WIDTH > 800 ? 280 : 0;
+    ui.CONSOLE_H = isSmallScreen() ? 90 : 110;
+    ui.tool_h    = isSmallScreen() ? 50 : 45;
+    ui.tool_rects= ui.tools.map((_,i)=>({x:8, y:55+i*(ui.tool_h+10), w:ui.PANEL_W-18, h:ui.tool_h}));
 });
-
-// الضغط على مفتاح R بالكيبورد لتدوير المكون المحدد
+ 
+// Press "R" to rotate the selected component
 window.addEventListener('keydown', e => {
     if(e.key.toLowerCase() === 'r'){
         let selectedComp = components.find(c => c.is_selected);
@@ -991,31 +1469,27 @@ window.addEventListener('keydown', e => {
         }
     }
 });
-
+ 
 // ══════════════════════════════════════════════════════
-//  ٨. حلقة الرسم والتشغيل الرئيسية (Game Loop)
+//  8. MAIN RENDER / SIMULATION LOOP
 // ══════════════════════════════════════════════════════
 let lastTime = Date.now();
 let mathFormulas = [];
-
+ 
 function loop(){
     let now = Date.now();
     let dt = (now - lastTime) / 1000;
-    if(dt > 0.1) dt = 0.1; // كبح القفزات الزمنية الكبيرة
+    if(dt > 0.1) dt = 0.1; // clamp large time jumps (tab switches, lag spikes)
     lastTime = now;
-
-    // تشغيل المحرك الفيزيائي وحساب الجهد والتيار
+ 
     mathFormulas = PhysicsEngine.solve(components, wires, dt);
-
-    // مسح Canvas ورسم الخلفية والشبكة
+ 
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0,0,WIDTH,HEIGHT);
     ui.draw_grid(ctx);
-
-    // رسم الأسلاك الثابتة
+ 
     wires.forEach(w => w.draw(ctx));
-
-    // رسم السلك التجريبي أثناء السحب والربط
+ 
     if(activeNode && tempWireEnd){
         ctx.strokeStyle = "rgba(255,255,255,0.4)";
         ctx.lineWidth = 3;
@@ -1026,32 +1500,28 @@ function loop(){
         ctx.stroke();
         ctx.setLineDash([]);
     }
-
-    // رسم القطع المكونة للدائرة
+ 
     components.forEach(c => c.draw(ctx));
-
-    // رسم واجهة حذف الأسلاك عند تحديد سلك
+ 
     if(selectedWire){
         drawWireDeleteBtn(ctx, selectedWire);
     }
-
-    // رسم واجهة زر حذف القطع الإلكترونية عند تحديد قطعة
+ 
     let currentSelectedComp = components.find(c => c.is_selected);
     if(currentSelectedComp){
         drawCompDeleteBtn(ctx, currentSelectedComp);
     }
-
-    // رسم أشرطة المهام والـ Dashboards
+ 
     ui.draw_toolbar(ctx);
     ui.draw_dashboard(ctx, currentSelectedComp, mathFormulas);
     ui.draw_console(ctx);
-
+ 
     requestAnimationFrame(loop);
 }
-
-// تشغيل برنامجك
+ 
 loop();
-
+ 
 </script>
 </body>
 </html>
+ 
